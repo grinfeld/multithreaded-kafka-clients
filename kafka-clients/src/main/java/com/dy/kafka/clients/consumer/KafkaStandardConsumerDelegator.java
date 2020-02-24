@@ -73,6 +73,8 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                     getRecords(kafkaConsumer).forEach(record -> processRecord(consumer, kafkaConsumer, record));
                 } catch (Exception e) {
                     handleRecordException(e);
+                    // in older kfka-clients versions we could not catch Serialization errors
+                    flowErrorHandler.doOnError(e);
                 }
             }
         } finally {
@@ -108,12 +110,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     private void doConsumerAction(BiConsumer<K, T> consumer, T value, K key) {
-        try {
-            consumer.accept(key, value);
-        } catch (Exception e) {
-            flowErrorHandler.doOnError(e);
-            throw e;
-        }
+        consumer.accept(key, value);
     }
 
     private void handleRecordException(Exception e) {
