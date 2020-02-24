@@ -45,7 +45,6 @@ class KafkaConsumerManagerTest {
     private KafkaProducerDelegator<String, TestObj> producer = null;
     private KafkaProperties kafkaProperties;
     private LifecycleConsumerElements lifecycleMocks = LifecycleConsumerElements.builder()
-            .deserializationErrorHandler(mock(DeserializationErrorHandler.class))
             .flowErrorHandler(mock(FlowErrorHandler.class))
             .onConsumerStop(mock(OnConsumerStop.class))
         .build();
@@ -209,9 +208,6 @@ class KafkaConsumerManagerTest {
         } catch (Exception ignore){}
         try {
             reset(lifecycleMocks.onStop());
-        } catch (Exception ignore){}
-        try {
-            reset(lifecycleMocks.deSerializationErrorHandler());
         } catch (Exception ignore){}
         try {
             reset(lifecycleMocks.flowErrorHandler());

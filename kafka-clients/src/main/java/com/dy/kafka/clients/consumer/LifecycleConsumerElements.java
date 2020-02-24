@@ -11,16 +11,14 @@ public interface LifecycleConsumerElements {
     OnConsumerStop ON_CONSUMER_STOP_DEF = () -> {};
     ConsumerRebalanceListener DEF_NOOP_REBALANCE_LISTENER = new NoOpConsumerRebalanceListener();
     FlowErrorHandler DEF_ON_FLOW_ERROR_HANDLER = new FlowErrorHandler() {};
-    DeserializationErrorHandler DEF_DESERIALIZATION_ERROR_HANDLER = new DeserializationErrorHandler() {};
 
     default OnConsumerStop onStop() { return ON_CONSUMER_STOP_DEF; }
     default ConsumerRebalanceListener rebalanceListener() { return null; }
     default FlowErrorHandler flowErrorHandler() { return DEF_ON_FLOW_ERROR_HANDLER; }
-    default DeserializationErrorHandler deSerializationErrorHandler() { return DEF_DESERIALIZATION_ERROR_HANDLER;}
 
     default Builder toBuilder() {
-        return new Builder().deserializationErrorHandler(deSerializationErrorHandler()).onConsumerStop(onStop())
-                .flowErrorHandler(flowErrorHandler()).deserializationErrorHandler(deSerializationErrorHandler());
+        return new Builder().onConsumerStop(onStop())
+                .flowErrorHandler(flowErrorHandler()).rebalanceListener(rebalanceListener());
     }
 
     static Builder builder() {
@@ -33,7 +31,6 @@ public interface LifecycleConsumerElements {
         private OnConsumerStop onConsumerStop = () -> {};
         private ConsumerRebalanceListener rebalanceListener = new NoOpConsumerRebalanceListener();
         private FlowErrorHandler flowErrorHandler = new FlowErrorHandler() {};
-        private DeserializationErrorHandler deserializationErrorHandler = new DeserializationErrorHandler() {};
 
         public LifecycleConsumerElements build() {
             return new LifecycleConsumerElements() {
@@ -42,7 +39,6 @@ public interface LifecycleConsumerElements {
                 public FlowErrorHandler flowErrorHandler() {
                     return getFlowErrorHandler();
                 }
-                public DeserializationErrorHandler deSerializationErrorHandler() { return getDeserializationErrorHandler(); }
             };
         }
 
@@ -60,12 +56,6 @@ public interface LifecycleConsumerElements {
         public Builder flowErrorHandler(FlowErrorHandler flowErrorHandler) {
             if (flowErrorHandler != null)
                 this.flowErrorHandler = flowErrorHandler;
-            return this;
-        }
-
-        public Builder deserializationErrorHandler(DeserializationErrorHandler deserializationErrorHandler) {
-            if (deserializationErrorHandler != null)
-                this.deserializationErrorHandler = deserializationErrorHandler;
             return this;
         }
     }
