@@ -60,7 +60,13 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             return;
         initConsumer();
         shutDown = Executors.newSingleThreadExecutor();
-        kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener);
+        MetricModule.getMetricStore().increaseCounter("subscribed." + consumerTopic,
+            () -> kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener)
+        );
+        runPoll(consumer);
+    }
+
+    private void runPoll(BiConsumer<K, T> consumer) {
         try {
             while (running.get()) {
                 try {
@@ -75,7 +81,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    private void initConsumer() {
+    void initConsumer() {
         kafkaConsumer = new KafkaConsumer<>(consumerProperties, keyDeserializer, valueDeserializer);
     }
 

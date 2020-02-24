@@ -147,6 +147,23 @@ class KafkaConsumerManagerTest {
         verify(lifecycle.onStop(), never()).onStop();
     }
 
+    @Test
+    @Timeout(value = 10L, unit = TimeUnit.SECONDS)
+    @DisplayName("when consumer already working and trying to start it again before it closed, expected the second start attempt is ignored")
+    void whenTryingToStartConsumeAgainOnWorkingConsumer_expectedIgnoredTheSecondTime() throws Exception {
+        initConsumer(null);
+        FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
+        doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
+
+        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
+        producer.send("Stam", new TestObj("testme"));
+        future.get();
+        verify(consumer, times(1)).initConsumer();
+        consumer.startConsume(biConsumer);
+        verify(consumer, times(1)).initConsumer();
+    }
+
     @AfterEach
     void closeConsumer() throws Exception {
         consumer.stopConsume();
