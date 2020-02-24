@@ -55,18 +55,14 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
 
     @Override
     public void startConsume(BiConsumer<K, T> consumer) {
-        // we should ensure it runs, only once
-        if (running.get())
+        // if it's already running, let's don't run it again
+        boolean currentRunning = running.getAndSet(true);
+        if (currentRunning)
             return;
         initConsumer();
         shutDown = Executors.newSingleThreadExecutor();
         kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener);
         try {
-            boolean currentRunning = running.getAndSet(true);
-            // if it's already running, let's avoid it running again
-            if (currentRunning)
-                return;
-
             while (running.get()) {
                 try {
                     getRecords(kafkaConsumer).forEach(record -> processRecord(consumer, kafkaConsumer, record));
@@ -75,6 +71,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                 }
             }
         } finally {
+            running.set(false);
             silentClose();
         }
     }
