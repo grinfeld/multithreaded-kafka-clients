@@ -3,7 +3,6 @@ package com.dy.kafka.clients.consumer;
 import com.dy.kafka.clients.KafkaProperties;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.metrics.guice.MetricModule;
-import com.dy.metrics.utils.Utils;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.*;
@@ -92,7 +91,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
-                consumer.accept(key, value);
+                processConsumerAction(consumer, value, key);
             }
             commitOffset(record, kafkaConsumer);
         } catch (Exception e) {
@@ -102,12 +101,18 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
+    private void processConsumerAction(BiConsumer<K, T> consumer, T value, K key) {
+        try {
+            consumer.accept(key, value);
+        } catch (Exception e) {
+            flowErrorHandler.doOnError(e);
+            throw e;
+        }
+    }
+
     void handleRecordException(Exception e) {
         log.error("We won't commit record, so we should get record again", e);
         MetricModule.getMetricStore().increaseCounter("consumer." + e.getClass().getSimpleName());
-        if (flowErrorHandler.doOnError(e).reThrowException()) {
-            Utils.rethrowRuntime(e);
-        }
     }
 
     ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {

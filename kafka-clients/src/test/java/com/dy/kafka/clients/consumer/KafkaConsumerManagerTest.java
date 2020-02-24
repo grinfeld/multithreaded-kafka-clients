@@ -20,7 +20,6 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.*;
 import org.mockito.ArgumentCaptor;
-import org.mockito.stubbing.Answer;
 import scala.collection.immutable.HashMap;
 
 import java.util.Map;
@@ -94,14 +93,14 @@ class KafkaConsumerManagerTest {
     // it means, that we have possible duplications
     @DisplayName("when consuming message performed successfully, but commit synchronously failed, expected commit asynchronously")
     void whenConsumeThrowsException_expectedNoCommitOffsetPerformed() throws Exception {
-        initConsumer(null);
+        LifecycleConsumerElements lifecycle = LifecycleConsumerElements.builder().flowErrorHandler(lifecycleMocks.flowErrorHandler()).build();
+        doNothing().when(lifecycle.flowErrorHandler()).doOnError(any(Throwable.class));
+        initConsumer(lifecycle);
+
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        @SuppressWarnings("unchecked")
-        BiConsumer<String, TestObj> biConsumer = mock(BiConsumer.class);
-        doThrow(RuntimeException.class).when(biConsumer).accept(anyString(), any(TestObj.class));
-        doAnswer((Answer<Void>) invocationOnMock -> { future.run(); return null; }).when(consumer).handleRecordException(any(Exception.class));
+        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> { future.run(); throw new RuntimeException(); };
 
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send("Stam", new TestObj("testme"));
@@ -109,7 +108,7 @@ class KafkaConsumerManagerTest {
 
         verify(consumer, never()).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
         verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
-
+        verify(lifecycle.flowErrorHandler(), times(1)).doOnError(any(Throwable.class));
     }
 
     @Test
