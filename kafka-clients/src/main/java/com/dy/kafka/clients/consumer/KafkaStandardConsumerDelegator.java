@@ -75,7 +75,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    void initConsumer() {
+    private void initConsumer() {
         kafkaConsumer = new KafkaConsumer<>(consumerProperties, keyDeserializer, valueDeserializer);
     }
 
@@ -110,12 +110,12 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    void handleRecordException(Exception e) {
+    private void handleRecordException(Exception e) {
         log.error("We won't commit record, so we should get record again", e);
         MetricModule.getMetricStore().increaseCounter("consumer." + e.getClass().getSimpleName());
     }
 
-    ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {
+    private ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {
         return kafkaConsumer.poll(Duration.ofMillis(consumerTimeout));
     }
 

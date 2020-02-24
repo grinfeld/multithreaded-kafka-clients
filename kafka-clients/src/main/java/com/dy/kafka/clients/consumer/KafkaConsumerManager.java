@@ -48,7 +48,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     }
 
     KafkaStandardConsumerDelegator<K, T> createKafkaConsumer(String uid, LifecycleConsumerElements lifecycleConsumerElements) {
-        return new KafkaStandardConsumerDelegator<K, T>(uid, properties, keyValueDeserializer, lifecycleConsumerElements);
+        return new KafkaStandardConsumerDelegator<>(uid, properties, keyValueDeserializer, lifecycleConsumerElements);
     }
 
     private LifecycleConsumerElements normalizeLifeCycleElements(BiConsumer<K, T> consumer) {
