@@ -91,7 +91,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
-                processConsumerAction(consumer, value, key);
+                doConsumerAction(consumer, value, key);
             }
             commitOffset(record, kafkaConsumer);
         } catch (Exception e) {
@@ -101,7 +101,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    private void processConsumerAction(BiConsumer<K, T> consumer, T value, K key) {
+    private void doConsumerAction(BiConsumer<K, T> consumer, T value, K key) {
         try {
             consumer.accept(key, value);
         } catch (Exception e) {
