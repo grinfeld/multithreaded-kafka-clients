@@ -42,11 +42,18 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                                           LifecycleConsumerElements lifecycleConsumerElements) {
         // if it's single consumer - it could be null or empty string
         this.uid = Optional.ofNullable(uid).orElse("");
-        this.consumerProperties = properties.getProperties() == null ? new Properties(properties.getProperties()) : new Properties();
+        this.consumerProperties = new Properties();
+        if (properties.getProperties() != null)
+            this.consumerProperties.putAll(properties.getProperties());
+
+        String groupId = (String)this.consumerProperties.get(ConsumerConfig.GROUP_ID_CONFIG);
+        if (groupId == null || groupId.trim().isEmpty()) {
+            throw new IllegalArgumentException("group.id shouldn't be empty");
+        }
 
         // the default (latest version) ENABLE_AUTO_COMMIT_CONFIG is true, we want to ensure that this value set - not depend on kafka-clients version
         // later we shouldn't commit manually in case of enableAutoCommit property set false (thw default is true)
-        this.enableAutoCommit = "false".equalsIgnoreCase((String)this.consumerProperties.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
+        this.enableAutoCommit = !"false".equalsIgnoreCase((String)this.consumerProperties.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
         this.consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, String.valueOf(enableAutoCommit));
 
         this.consumerTopic = properties.getTopic();
@@ -67,6 +74,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             return;
         initConsumer();
         shutDown = Executors.newSingleThreadExecutor();
+        //kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener);
         MetricModule.getMetricStore().increaseCounter("subscribed." + consumerTopic,
             () -> kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener)
         );

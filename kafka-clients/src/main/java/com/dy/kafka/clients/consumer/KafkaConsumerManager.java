@@ -76,6 +76,9 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
             } catch (InterruptedException ignore) {
                 // ignore
             }
+        } catch (Exception e) {
+            latch.countDown();
+            throw e;
         } finally {
             //this.consumers = new ConcurrentHashMap<>();
             executors.shutdown();

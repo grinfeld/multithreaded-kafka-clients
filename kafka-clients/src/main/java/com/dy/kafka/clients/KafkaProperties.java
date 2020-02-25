@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Properties;
 
 @Data
-@Builder
+@Builder(builderClassName = "Builder", toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor(access = AccessLevel.PROTECTED)
 public class KafkaProperties {
