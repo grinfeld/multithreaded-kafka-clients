@@ -93,12 +93,14 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
 
     private void processRecord(BiConsumer<K, T> consumer, Consumer<K, T> kafkaConsumer, ConsumerRecord<K, T> record) {
         try {
+            // todo: put some metadata (partition, offset in threadcontext ???
             T value = record.value();
             K key = record.key();
             if (value == null) {
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
+                // todo: if I want to propagate metadata -> headers and so on
                 doConsumerAction(consumer, value, key);
             }
             // todo: if enable.auto.commit=true -> seems we don't need this
