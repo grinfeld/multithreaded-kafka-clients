@@ -101,6 +101,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             } else {
                 doConsumerAction(consumer, value, key);
             }
+            // todo: if enable.auto.commit=true -> seems we don't need this
             commitOffset(record, kafkaConsumer);
         } catch (Exception e) {
             if (running.get())
@@ -127,9 +128,10 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         try {
             consumer.commitSync(metadata, Duration.ofMillis(500));
         } catch (Exception e) {
-            if (running.get())
+            if (running.get()) {
+                // todo: if enable.auto.commit=true -> seems we don't need this
                 commitOffsetAsync(consumer, metadata);
-            else
+            } else
                 throw e;
         }
     }
