@@ -33,6 +33,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     private OnConsumerStop onStop;
     private ConsumerRebalanceListener rebalanceListener;
     private FlowErrorHandler flowErrorHandler;
+    private boolean enableAutoCommit = true;
 
     // putting shutDown executor as instance variable and initiating it during startConsume, ensures that it will be called only once during close/stopConsume process
     private ExecutorService shutDown;
@@ -41,7 +42,13 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                                           LifecycleConsumerElements lifecycleConsumerElements) {
         // if it's single consumer - it could be null or empty string
         this.uid = Optional.ofNullable(uid).orElse("");
-        this.consumerProperties = properties.getProperties();
+        this.consumerProperties = properties.getProperties() == null ? new Properties(properties.getProperties()) : new Properties();
+
+        // the default (latest version) ENABLE_AUTO_COMMIT_CONFIG is true, we want to ensure that this value set - not depend on kafka-clients version
+        // later we shouldn't commit manually in case of enableAutoCommit property set false (thw default is true)
+        this.enableAutoCommit = "false".equalsIgnoreCase((String)this.consumerProperties.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
+        this.consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, String.valueOf(enableAutoCommit));
+
         this.consumerTopic = properties.getTopic();
         lifecycleConsumerElements = Optional.ofNullable(lifecycleConsumerElements).orElse(DEF_LIFECYCLE_ELEMENTS);
         this.consumerTimeout = properties.getTimeout() > 0 ? properties.getTimeout() : Integer.MAX_VALUE;
@@ -103,10 +110,10 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                 // todo: if I want to propagate metadata -> headers and so on
                 doConsumerAction(consumer, value, key);
             }
-            // todo: if enable.auto.commit=true -> seems we don't need this
-            commitOffset(record, kafkaConsumer);
+            if (!enableAutoCommit)
+                commitOffset(record, kafkaConsumer);
         } catch (Exception e) {
-            if (running.get())
+            if (running.get() && !enableAutoCommit)
                 kafkaConsumer.seek(new TopicPartition(record.topic(), record.partition()), record.offset());
             throw e;
         }
@@ -130,8 +137,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         try {
             consumer.commitSync(metadata, Duration.ofMillis(500));
         } catch (Exception e) {
-            if (running.get()) {
-                // todo: if enable.auto.commit=true -> seems we don't need this
+            if (running.get() && !enableAutoCommit) {
                 commitOffsetAsync(consumer, metadata);
             } else
                 throw e;
