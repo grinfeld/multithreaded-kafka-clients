@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
         <artifactId>ditributed</artifactId>
-        <groupId>com.dy.mario</groupId>
+        <groupId>com.dy.misha</groupId>
         <version>${revision}</version>
         <relativePath>..</relativePath>
     </parent>
@@ -42,7 +42,7 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.dy.mario</groupId>
+            <groupId>com.dy.misha</groupId>
             <artifactId>utils</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
