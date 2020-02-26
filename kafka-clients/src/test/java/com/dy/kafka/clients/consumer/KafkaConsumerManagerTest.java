@@ -24,6 +24,7 @@ import scala.collection.immutable.HashMap;
 
 import java.util.Map;
 import java.util.Properties;
+import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
@@ -39,11 +40,14 @@ import static org.mockito.Mockito.*;
 // actually it tests both Consumer Manager and Delegator
 class KafkaConsumerManagerTest {
 
+    private static Random random = new Random();
+    
     private EmbeddedK kafka = null;
     private KafkaStandardConsumerDelegator<String, TestObj> consumer = null;
     private KafkaConsumerManager<String, TestObj> manager = null;
     private KafkaProducerDelegator<String, TestObj> producer = null;
     private KafkaProperties kafkaProperties;
+    private String topicName;
     private LifecycleConsumerElements lifecycleMocks = LifecycleConsumerElements.builder()
             .flowErrorHandler(mock(FlowErrorHandler.class))
             .onConsumerStop(mock(OnConsumerStop.class))
@@ -56,7 +60,7 @@ class KafkaConsumerManagerTest {
         props.put("group.id", "test");
         props.put("auto.offset.reset", "earliest");
         props.put("enable.auto.commit", "false");
-        kafkaProperties = KafkaProperties.builder().timeout(5L).topic("test").properties(props).build();
+        kafkaProperties = KafkaProperties.builder().timeout(5L).properties(props).build();
 
         kafka = EmbeddedKafka.start(EmbeddedKafkaConfig.apply(6001, 6000, new HashMap<>(), new HashMap<>(), new HashMap<>()));
         // kafka.broker().adminManager().createTopics(10, true, );
@@ -66,19 +70,25 @@ class KafkaConsumerManagerTest {
     void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties) {
         resetAllMocks();
 
-        Properties kafkaProps = kafkaProperties.getProperties();
+        Properties kafkaProps = new Properties();
+        kafkaProps.putAll(kafkaProperties.getProperties());
         if (additionalProperties != null) {
             kafkaProps.putAll(additionalProperties);
         }
-        KafkaProperties props = kafkaProperties.toBuilder().properties(kafkaProps).build();
+        KafkaProperties props = kafkaProperties.toBuilder().topic(topicName).properties(kafkaProps).build();
 
         consumer = spy(new KafkaStandardConsumerDelegator<>(null, props, deSerializer, lifecycleConsumerElements));
         manager = spy(new KafkaConsumerManager<>(1, props, deSerializer, lifecycleConsumerElements));
     }
+    
+    @BeforeEach
+    void generateTopicName() {
+        topicName = "test" + System.currentTimeMillis() + "_" + random.nextInt(100);
+    }
 
     @Test
     @Timeout(value = 5L, unit = TimeUnit.SECONDS)
-    @DisplayName("hwen no defined 'group.id' in properties, expected IllegalArgumentException thrown")
+    @DisplayName("when no defined 'group.id' in properties, expected IllegalArgumentException thrown")
     void whenNoGroupId_expectedIllegalArgumentException() {
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:6001");
@@ -91,8 +101,8 @@ class KafkaConsumerManagerTest {
 
     @Test
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
-    @DisplayName("when consuming message performed successfully, expected commit kafka offset synchronously")
-    void whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
+    @DisplayName("with enable.auto.commit=false, when consuming message performed successfully, expected commit kafka offset synchronously")
+    void withAutoCommitFalse_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
         initConsumer(null, null);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
@@ -101,10 +111,32 @@ class KafkaConsumerManagerTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        producer.send("Stam", new TestObj("testme"));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
 
         verify(consumer, times(1)).commitOffset(captor.capture(), any(Consumer.class));
+        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
+    }
+
+    @Test
+    @Timeout(value = 10L, unit = TimeUnit.SECONDS)
+    @DisplayName("with enable.auto.commit=true, when consuming message performed successfully, expected commit kafka offset synchronously")
+    void withAutoCommitTrue_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
+        Thread.sleep(1000L);
+        Properties props = new Properties();
+        props.put("enable.auto.commit", "true");
+        initConsumer(null, props);
+        FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
+        doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
+
+        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
+        Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
+        future.get();
+
+        verify(consumer, never()).commitOffset(captor.capture(), any(Consumer.class));
         verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
     }
 
@@ -123,7 +155,7 @@ class KafkaConsumerManagerTest {
         BiConsumer<String, TestObj> biConsumer = (s, testObj) -> { future.run(); throw new RuntimeException(); };
 
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        producer.send("Stam", new TestObj("testme"));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
 
         verify(consumer, never()).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
@@ -142,7 +174,7 @@ class KafkaConsumerManagerTest {
 
         BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        producer.send("Stam", new TestObj("testme"));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
         manager.stopConsume();
 
@@ -161,7 +193,7 @@ class KafkaConsumerManagerTest {
 
         BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        producer.send("Stam", new TestObj("testme"));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
         assertThrows(RuntimeException.class, () -> manager.startConsume(biConsumer));
         verify(lifecycle.onStop(), never()).onStop();
@@ -177,7 +209,7 @@ class KafkaConsumerManagerTest {
 
         BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        producer.send("Stam", new TestObj("testme"));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
         verify(consumer, times(1)).initConsumer();
         consumer.startConsume(biConsumer);

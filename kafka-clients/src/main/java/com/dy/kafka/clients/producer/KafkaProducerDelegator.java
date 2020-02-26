@@ -24,7 +24,11 @@ public class KafkaProducerDelegator<K, T> {
     }
 
     public Future<RecordMetadata> send(K key, T value, Callback callback) {
-        ProducerRecord<K, T> producerRecord = new ProducerRecord<>(topic, key, value);
+        return send(topic, key, value, callback);
+    }
+
+    public Future<RecordMetadata> send(String topicName, K key, T value, Callback callback) {
+        ProducerRecord<K, T> producerRecord = new ProducerRecord<>(topicName, key, value);
         return producer.send(producerRecord, callback);
     }
 }
