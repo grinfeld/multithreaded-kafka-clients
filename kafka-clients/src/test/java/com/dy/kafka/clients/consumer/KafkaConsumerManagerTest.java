@@ -1,6 +1,8 @@
 package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
+import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
+import com.dy.kafka.clients.consumer.model.Worker;
 import com.dy.kafka.clients.producer.KafkaProducerDelegator;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.kafka.clients.serializers.gson.JsonDeserializer;
@@ -28,7 +30,6 @@ import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiConsumer;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -96,7 +97,7 @@ class KafkaConsumerManagerTest {
         props.put("enable.auto.commit", "false");
         KafkaProperties kafkaProperties = KafkaProperties.builder().timeout(5L).topic("test").properties(props).build();
         KafkaConsumerManager<String, TestObj> manager = new KafkaConsumerManager<>(1, kafkaProperties, deSerializer, LifecycleConsumerElements.builder().build());
-        assertThrows(IllegalArgumentException.class, () -> manager.startConsume((key, value) -> {}));
+        assertThrows(IllegalArgumentException.class, () -> manager.startConsume((key, value, header) -> {}));
     }
 
     @Test
@@ -107,7 +108,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> future.run();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
@@ -128,7 +129,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> future.run();
         @SuppressWarnings("unchecked")
         ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
@@ -151,7 +152,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> { future.run(); throw new RuntimeException(); };
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> { future.run(); throw new RuntimeException(); };
 
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
@@ -171,7 +172,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
@@ -190,7 +191,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
@@ -206,7 +207,7 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
-        BiConsumer<String, TestObj> biConsumer = (s, testObj) -> future.run();
+        Worker<String, TestObj> biConsumer = (s, testObj, hs) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();

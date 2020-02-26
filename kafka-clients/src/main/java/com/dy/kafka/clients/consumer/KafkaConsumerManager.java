@@ -1,6 +1,8 @@
 package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
+import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
+import com.dy.kafka.clients.consumer.model.Worker;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.metrics.utils.Utils;
 import lombok.extern.slf4j.Slf4j;
@@ -12,7 +14,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.*;
-import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -37,14 +38,14 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     }
 
     @Override
-    public void startConsume(BiConsumer<K, T> consumer) {
+    public void startConsume(Worker<K, T> consumer) {
         if (!consumers.isEmpty()) {
             throw new RuntimeException("Can't start new consumers, until all of previously started consumers not stopped");
         }
         consume(consumer);
     }
 
-    private KafkaStandardConsumerDelegator<K, T> initConsumer(BiConsumer<K, T> consumer, String uid) {
+    private KafkaStandardConsumerDelegator<K, T> initConsumer(Worker<K, T> consumer, String uid) {
         LifecycleConsumerElements lifecycleConsumerElementsLocal = normalizeLifeCycleElements(consumer);
         return createKafkaConsumer(uid, lifecycleConsumerElementsLocal);
     }
@@ -53,7 +54,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
         return new KafkaStandardConsumerDelegator<>(uid, properties, keyValueDeserializer, lifecycleConsumerElements);
     }
 
-    private LifecycleConsumerElements normalizeLifeCycleElements(BiConsumer<K, T> consumer) {
+    private LifecycleConsumerElements normalizeLifeCycleElements(Worker<K, T> consumer) {
         ConsumerRebalanceListener rebalanceListener = new MultiThreadedRebalanceListener<>(consumer, this);
         LifecycleConsumerElements lifecycleConsumerElementsLocal = lifecycleConsumerElements;
         if (lifecycleConsumerElementsLocal == null) {
@@ -65,7 +66,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
         return lifecycleConsumerElementsLocal;
     }
 
-    private void consume(BiConsumer<K, T> consumer) {
+    private void consume(Worker<K, T> consumer) {
         ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
         latch = new CountDownLatch(1);
         Throwable t = null;
@@ -113,10 +114,10 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     }
 
     static class MultiThreadedRebalanceListener<K, T> implements ConsumerRebalanceListener {
-        private BiConsumer<K, T> consumer;
+        private Worker<K, T> consumer;
         private KafkaConsumerManager<K, T> manager;
 
-        public MultiThreadedRebalanceListener(BiConsumer<K, T> consumer, KafkaConsumerManager<K, T> manager) {
+        public MultiThreadedRebalanceListener(Worker<K, T> consumer, KafkaConsumerManager<K, T> manager) {
             this.consumer = consumer;
             this.manager = manager;
         }

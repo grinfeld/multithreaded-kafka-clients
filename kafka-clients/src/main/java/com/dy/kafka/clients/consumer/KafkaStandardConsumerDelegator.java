@@ -1,12 +1,20 @@
 package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
+import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
+import com.dy.kafka.clients.consumer.model.MetaData;
+import com.dy.kafka.clients.consumer.model.Worker;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.metrics.guice.MetricModule;
+import lombok.AllArgsConstructor;
+import lombok.Data;
 import lombok.Getter;
+import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.header.Header;
+import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 
 import java.time.Duration;
@@ -15,7 +23,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 @Slf4j
 public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelegator<K, T> {
@@ -67,7 +76,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     @Override
-    public void startConsume(BiConsumer<K, T> consumer) {
+    public void startConsume(Worker<K, T> consumer) {
         // if it's already running, let's don't run it again
         boolean currentRunning = running.getAndSet(true);
         if (currentRunning)
@@ -81,7 +90,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         runPoll(consumer);
     }
 
-    private void runPoll(BiConsumer<K, T> consumer) {
+    private void runPoll(Worker<K, T> consumer) {
         try {
             while (running.get()) {
                 try {
@@ -102,17 +111,18 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         kafkaConsumer = new KafkaConsumer<>(consumerProperties, keyDeserializer, valueDeserializer);
     }
 
-    private void processRecord(BiConsumer<K, T> consumer, Consumer<K, T> kafkaConsumer, ConsumerRecord<K, T> record) {
+    private void processRecord(Worker<K, T> consumer, Consumer<K, T> kafkaConsumer, ConsumerRecord<K, T> record) {
         try {
             // todo: put some metadata (partition, offset in threadcontext ???
             T value = record.value();
             K key = record.key();
+            Headers headers = record.headers();
             if (value == null) {
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
                 // todo: if I want to propagate metadata -> headers and so on
-                doConsumerAction(consumer, value, key);
+                doConsumerAction(consumer, value, key, wrapHeaders(headers));
             }
             if (!enableAutoCommit)
                 commitOffset(record, kafkaConsumer);
@@ -123,8 +133,30 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    private void doConsumerAction(BiConsumer<K, T> consumer, T value, K key) {
-        consumer.accept(key, value);
+    private List<MetaData> wrapHeaders(Headers headers) {
+        return StreamSupport.stream(headers.spliterator(), false).map(MetaDataForKafkaHeader::new).collect(Collectors.toList());
+    }
+
+    @AllArgsConstructor
+    @Data
+    @Value
+    private static class MetaDataForKafkaHeader implements MetaData {
+
+        private Header header;
+
+        @Override
+        public String key() {
+            return header.key();
+        }
+
+        @Override
+        public <T> T value(CustomDeserializer<byte[], T> deserializer) {
+            return header.value() == null ? null : deserializer.deserialize(header.value());
+        }
+    }
+
+    private void doConsumerAction(Worker<K, T> consumer, T value, K key, Iterable<MetaData> headers) {
+        consumer.accept(key, value, headers);
     }
 
     private void handleRecordException(Exception e) {

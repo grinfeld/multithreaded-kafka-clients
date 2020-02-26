@@ -1,5 +1,7 @@
-package com.dy.kafka.clients.consumer;
+package com.dy.kafka.clients.consumer.model;
 
+import com.dy.kafka.clients.consumer.FlowErrorHandler;
+import com.dy.kafka.clients.consumer.OnConsumerStop;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
