@@ -102,10 +102,6 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         kafkaConsumer = new KafkaConsumer<>(consumerProperties, keyDeserializer, valueDeserializer);
     }
 
-    public boolean responsibleOfSomePartitions(Collection<TopicPartition> partitions) {
-        return new HashSet<>(kafkaConsumer.assignment()).removeAll(partitions);
-    }
-
     private void processRecord(BiConsumer<K, T> consumer, Consumer<K, T> kafkaConsumer, ConsumerRecord<K, T> record) {
         try {
             // todo: put some metadata (partition, offset in threadcontext ???
@@ -178,14 +174,18 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    public void pause(Collection<TopicPartition> partitions) {
-        if (running.get() && kafkaConsumer != null)
-            kafkaConsumer.pause(partitions);
+    public void pause() {
+        if (running.get() && kafkaConsumer != null) {
+            kafkaConsumer.pause(kafkaConsumer.assignment());
+            MetricModule.getMetricStore().increaseCounter("consumer.paused." + this.uid);
+        }
     }
 
-    public void resume(Collection<TopicPartition> partitions) {
-        if (running.get() && kafkaConsumer != null)
-            kafkaConsumer.resume(partitions);
+    public void resume() {
+        if (running.get() && kafkaConsumer != null) {
+            kafkaConsumer.resume(kafkaConsumer.assignment());
+            MetricModule.getMetricStore().increaseCounter("consumer.resumed." + this.uid);
+        }
     }
 
     public void stopConsume() {

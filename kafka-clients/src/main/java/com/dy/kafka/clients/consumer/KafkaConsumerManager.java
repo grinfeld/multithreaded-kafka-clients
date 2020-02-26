@@ -2,12 +2,14 @@ package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
+import com.dy.metrics.utils.Utils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
 import org.apache.kafka.common.TopicPartition;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
@@ -66,6 +68,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     private void consume(BiConsumer<K, T> consumer) {
         ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
         latch = new CountDownLatch(1);
+        Throwable t = null;
         try {
             this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
                     .map(uid -> initConsumer(consumer, uid))
@@ -77,35 +80,39 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
                 // ignore
             }
         } catch (Exception e) {
-            latch.countDown();
-            throw e;
+            t = e;
         } finally {
-            //this.consumers = new ConcurrentHashMap<>();
             executors.shutdown();
+            resetConsumers();
+            if (t != null)
+                Utils.rethrowRuntime(t);
         }
     }
 
-    @Override
-    public void pause(Collection<TopicPartition> partitions) {
-        this.consumers.values().stream().filter(c -> c.responsibleOfSomePartitions(partitions))
-                .forEach(c -> c.pause(partitions));
+    public void pause(String uid) {
+        Optional.ofNullable(this.consumers.get(uid)).ifPresent(KafkaStandardConsumerDelegator::pause);
     }
 
-    @Override
-    public void resume(Collection<TopicPartition> partitions) {
-        this.consumers.values().stream().filter(c -> c.responsibleOfSomePartitions(partitions))
-                .forEach(c -> c.resume(partitions));
+    public void resume(String uid) {
+        Optional.ofNullable(this.consumers.get(uid)).ifPresent(KafkaStandardConsumerDelegator::resume);
     }
 
     @Override
     public void stopConsume() {
-        consumers.forEach((id, consumer) -> consumer.stopConsume());
+        try {
+            consumers.forEach((id, consumer) -> consumer.stopConsume());
+        } finally {
+            resetConsumers();
+        }
+
+    }
+
+    private void resetConsumers() {
         latch.countDown();
         this.consumers = new ConcurrentHashMap<>();
     }
 
-    // todo: ??????
-    private static class MultiThreadedRebalanceListener<K, T> implements ConsumerRebalanceListener {
+    static class MultiThreadedRebalanceListener<K, T> implements ConsumerRebalanceListener {
         private BiConsumer<K, T> consumer;
         private KafkaConsumerManager<K, T> manager;
 

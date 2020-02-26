@@ -122,7 +122,6 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=true, when consuming message performed successfully, expected commit kafka offset synchronously")
     void withAutoCommitTrue_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
-        Thread.sleep(1000L);
         Properties props = new Properties();
         props.put("enable.auto.commit", "true");
         initConsumer(null, props);
