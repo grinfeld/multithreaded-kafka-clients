@@ -177,13 +177,17 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     void commitOffset(ConsumerRecord<K, T> record, Consumer<?, ?> consumer) {
         Map<TopicPartition, OffsetAndMetadata> metadata = getCommitMetadata(record);
         try {
-            consumer.commitSync(metadata, Duration.ofMillis(500));
+            commitSync(consumer, metadata);
         } catch (Exception e) {
             if (running.get() && !enableAutoCommit) {
                 commitOffsetAsync(consumer, metadata);
             } else
                 throw e;
         }
+    }
+
+    void commitSync(Consumer<?, ?> consumer, Map<TopicPartition, OffsetAndMetadata> metadata) {
+        consumer.commitSync(metadata, Duration.ofMillis(500));
     }
 
     void commitOffsetAsync(Consumer<?, ?> consumer, Map<TopicPartition, OffsetAndMetadata> metadata) {

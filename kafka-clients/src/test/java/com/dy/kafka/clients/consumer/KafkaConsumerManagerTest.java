@@ -21,7 +21,6 @@ import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.*;
-import org.mockito.ArgumentCaptor;
 import scala.collection.immutable.HashMap;
 
 import java.util.Map;
@@ -35,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doNothing;
 
 @Slf4j
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -109,13 +109,11 @@ class KafkaConsumerManagerTest {
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
         Worker<String, TestObj> biConsumer = (s, testObj, hs, commander) -> future.run();
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
 
-        verify(consumer, times(1)).commitOffset(captor.capture(), any(Consumer.class));
+        verify(consumer, times(1)).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
         verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
     }
 
@@ -128,16 +126,36 @@ class KafkaConsumerManagerTest {
         initConsumer(null, props);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
+        doNothing().when(consumer).commitSync(any(Consumer.class), anyMap());
+        doNothing().when(consumer).commitOffsetAsync(any(Consumer.class), anyMap());
 
         Worker<String, TestObj> biConsumer = (s, testObj, hs, commander) -> future.run();
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<ConsumerRecord<String, TestObj>> captor = ArgumentCaptor.forClass(ConsumerRecord.class);
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null);
         future.get();
 
-        verify(consumer, never()).commitOffset(captor.capture(), any(Consumer.class));
-        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
+        verify(consumer, never()).commitSync(any(Consumer.class), anyMap());
+        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), anyMap());
+    }
+
+    @Test
+    @Timeout(value = 10L, unit = TimeUnit.SECONDS)
+    @DisplayName("with enable.auto.commit=false, when consuming message performed successfully and commitSync fails, expected commit kafka offset synchronously")
+    void withAutoCommitFalse_whenConsumeDataPerformedOkCommitSyncFails_expectedCommitOffsetSucceeded() throws Exception {
+        initConsumer(null, null);
+        FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
+        doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
+        doThrow(new RuntimeException()).when(consumer).commitSync(any(Consumer.class), anyMap());
+        doNothing().when(consumer).commitOffsetAsync(any(Consumer.class), anyMap());
+
+        Worker<String, TestObj> biConsumer = (s, testObj, hs, commander) -> future.run();
+
+        Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
+        producer.send(topicName, "Stam", new TestObj("testme"), null);
+        future.get();
+
+        verify(consumer, times(1)).commitSync(any(Consumer.class), anyMap());
+        verify(consumer, times(1)).commitOffsetAsync(any(Consumer.class), anyMap());
     }
 
     @Test
