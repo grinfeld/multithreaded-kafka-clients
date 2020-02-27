@@ -1,6 +1,7 @@
 package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
+import com.dy.kafka.clients.consumer.model.Commander;
 import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
 import com.dy.kafka.clients.consumer.model.MetaData;
 import com.dy.kafka.clients.consumer.model.Worker;
@@ -43,6 +44,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     private ConsumerRebalanceListener rebalanceListener;
     private FlowErrorHandler flowErrorHandler;
     private boolean enableAutoCommit = true;
+    private Commander commander;
 
     // putting shutDown executor as instance variable and initiating it during startConsume, ensures that it will be called only once during close/stopConsume process
     private ExecutorService shutDown;
@@ -73,6 +75,10 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         this.valueDeserializer = keyValueDeserializer.valueDeSerializer();
         this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
         this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(new FlowErrorHandler() {});
+        this.commander = new Commander() {
+            @Override public void pause() { KafkaStandardConsumerDelegator.this.pause(); }
+            @Override public void resume() { KafkaStandardConsumerDelegator.this.resume(); }
+        };
     }
 
     @Override
@@ -156,7 +162,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     private void doConsumerAction(Worker<K, T> consumer, T value, K key, Iterable<MetaData> headers) {
-        consumer.accept(key, value, headers);
+        consumer.accept(key, value, headers, null);
     }
 
     private void handleRecordException(Exception e) {
