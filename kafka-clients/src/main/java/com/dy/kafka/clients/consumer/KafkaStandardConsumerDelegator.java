@@ -76,8 +76,23 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
         this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(new FlowErrorHandler() {});
         this.commander = new Commander() {
-            @Override public void pause() { KafkaStandardConsumerDelegator.this.pause(); }
             @Override public void resume() { KafkaStandardConsumerDelegator.this.resume(); }
+
+            @Override public void pause(Duration duration) {
+                scheduleResume(duration);
+                KafkaStandardConsumerDelegator.this.pause();
+            }
+
+            private void scheduleResume(Duration duration) {
+                if (duration != null) {
+                    new Timer().schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            resume();
+                        }
+                    }, duration.toMillis());
+                }
+            }
         };
     }
 
@@ -187,6 +202,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     void commitSync(Consumer<?, ?> consumer, Map<TopicPartition, OffsetAndMetadata> metadata) {
+        // todo: duration should be from properties ???
         consumer.commitSync(metadata, Duration.ofMillis(500));
     }
 
