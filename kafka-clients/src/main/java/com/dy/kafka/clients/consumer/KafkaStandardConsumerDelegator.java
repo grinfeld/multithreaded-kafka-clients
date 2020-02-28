@@ -220,6 +220,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     public void pause() {
+        resume.set(false);
         pause.set(true);
     }
 

@@ -149,8 +149,6 @@ class KafkaConsumerManagerTest {
         initConsumer(null, createAutocommitProperty(true));
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
-        doNothing().when(consumer).commitSync(any(Consumer.class), anyMap());
-        doNothing().when(consumer).commitOffsetAsync(any(Consumer.class), anyMap());
 
         Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> future.run();
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
@@ -169,7 +167,6 @@ class KafkaConsumerManagerTest {
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
         doThrow(new RuntimeException()).when(consumer).commitSync(any(Consumer.class), anyMap());
-        doNothing().when(consumer).commitOffsetAsync(any(Consumer.class), anyMap());
 
         Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> future.run();
 
@@ -188,8 +185,6 @@ class KafkaConsumerManagerTest {
         initConsumer(null, null);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
-        doNothing().when(consumer).commitSync(any(Consumer.class), anyMap());
-        doNothing().when(consumer).commitOffsetAsync(any(Consumer.class), anyMap());
 
         Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> {
             assertThat(metaData.getHeaders()).isNotNull().hasSize(1);
