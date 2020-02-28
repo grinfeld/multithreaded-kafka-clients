@@ -11,7 +11,6 @@ import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 
 import java.time.Duration;
@@ -135,7 +134,6 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             // todo: put some metadata (partition, offset in threadcontext ???
             T value = record.value();
             K key = record.key();
-            Headers headers = record.headers();
             if (value == null) {
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");

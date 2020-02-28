@@ -90,7 +90,7 @@ class KafkaConsumerManagerTest {
         producer = new KafkaProducerDelegator<>(kafkaProperties, new StringSerializer(), new JsonSerializer<>(GSON));
     }
 
-    void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties) {
+    void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties, KeyValueDeserializer<String, TestObj> deSerializer) {
         resetAllMocks();
 
         Properties consumerProps = new Properties();
@@ -129,7 +129,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=false, when consuming message performed successfully, expected commit kafka offset synchronously")
     void withAutoCommitFalse_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(false));
+        initConsumer(null, createAutocommitProperty(false), deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -146,7 +146,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=true, when consuming message performed successfully, expected commit kafka offset synchronously")
     void withAutoCommitTrue_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(true));
+        initConsumer(null, createAutocommitProperty(true), deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -163,7 +163,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=false, when consuming message performed successfully and commitSync fails, expected commit kafka offset synchronously")
     void withAutoCommitFalse_whenConsumeDataPerformedOkCommitSyncFails_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(false));
+        initConsumer(null, createAutocommitProperty(false), deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
         doThrow(new RuntimeException()).when(consumer).commitSync(any(Consumer.class), anyMap());
@@ -182,7 +182,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with sending header, when consuming message performed successfully, expected received same header")
     void withSendingHeaders_whenConsumeDataPerformedOk_expectedHeadersReceived() throws Exception {
-        initConsumer(null, null);
+        initConsumer(null, null, deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -205,7 +205,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("when consuming message performed successfully and called paused, expected consumer paused")
     void whenConsumeDataPerformedOkAndCallingPause_expectedPauseCalled() throws Exception {
-        initConsumer(null, null);
+        initConsumer(null, null, deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -227,7 +227,7 @@ class KafkaConsumerManagerTest {
     void whenConsumeThrowsException_expectedNoCommitOffsetPerformed() throws Exception {
         LifecycleConsumerElements lifecycle = LifecycleConsumerElements.builder().flowErrorHandler(lifecycleMocks.flowErrorHandler()).build();
         doNothing().when(lifecycle.flowErrorHandler()).doOnError(any(Throwable.class));
-        initConsumer(lifecycle, null);
+        initConsumer(lifecycle, null, deSerializer);
 
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
@@ -248,7 +248,7 @@ class KafkaConsumerManagerTest {
     @DisplayName("when stopping to consume gracefully, expected calling stop consume on consumer and onStop")
     void whenManagerCloses_expectedConsumerCloseAndOnStopInvoked() throws Exception {
         LifecycleConsumerElements lifecycle = lifecycleMocks.toBuilder().build();
-        initConsumer(lifecycle, null);
+        initConsumer(lifecycle, null, deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -267,7 +267,7 @@ class KafkaConsumerManagerTest {
     @DisplayName("when trying to startConsume, when not all previously started consumers stopped, expected RuntimeException to be thrown, and not calling onStop") // since we didn't start to consume again
     void whenManagerStartsConsumeAndNotAllConsumersClosed_expectedRuntimeException() throws Exception {
         LifecycleConsumerElements lifecycle = LifecycleConsumerElements.builder().onConsumerStop(lifecycleMocks.onStop()).build();
-        initConsumer(lifecycle, null);
+        initConsumer(lifecycle, null, deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -283,7 +283,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("when consumer already working and trying to start it again before it closed, expected the second start attempt is ignored")
     void whenTryingToStartConsumeAgainOnWorkingConsumer_expectedIgnoredTheSecondTime() throws Exception {
-        initConsumer(null, null);
+        initConsumer(null, null, deSerializer);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
