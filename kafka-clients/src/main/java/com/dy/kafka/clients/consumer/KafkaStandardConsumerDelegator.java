@@ -1,10 +1,7 @@
 package com.dy.kafka.clients.consumer;
 
 import com.dy.kafka.clients.KafkaProperties;
-import com.dy.kafka.clients.consumer.model.Commander;
-import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
-import com.dy.kafka.clients.consumer.model.MetaData;
-import com.dy.kafka.clients.consumer.model.Worker;
+import com.dy.kafka.clients.consumer.model.*;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.metrics.guice.MetricModule;
 import lombok.AllArgsConstructor;
@@ -14,7 +11,6 @@ import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.header.Header;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.Deserializer;
 
@@ -78,9 +74,9 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
         this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(new FlowErrorHandler() {});
         this.commander = new Commander() {
-            @Override public void resume() { KafkaStandardConsumerDelegator.this.resume(); }
+            @Override public void resume(MetaData metaData) { KafkaStandardConsumerDelegator.this.resume(); }
 
-            @Override public void pause(Duration duration) {
+            @Override public void pause(MetaData metaData, Duration duration) {
                 scheduleResume(duration);
                 KafkaStandardConsumerDelegator.this.pause();
             }
@@ -90,7 +86,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
-                            resume();
+                            resume(null);
                         }
                     }, duration.toMillis());
                 }
@@ -120,7 +116,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                     getRecords(kafkaConsumer).forEach(record -> processRecord(consumer, kafkaConsumer, record));
                 } catch (Exception e) {
                     handleRecordException(e);
-                    // in older kfka-clients versions we could not catch Serialization errors
+                    // in older kafka-clients versions we could not catch Serialization errors
                     flowErrorHandler.doOnError(e);
                 }
             }
@@ -145,7 +141,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                 MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
                 // todo: if I want to propagate metadata -> headers and so on
-                doConsumerAction(consumer, value, key, wrapHeaders(headers));
+                doConsumerAction(consumer, value, key, wrapMetaData(record));
             }
             if (!enableAutoCommit)
                 commitOffset(record, kafkaConsumer);
@@ -156,30 +152,13 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    private List<MetaData> wrapHeaders(Headers headers) {
-        return StreamSupport.stream(headers.spliterator(), false).map(MetaDataForKafkaHeader::new).collect(Collectors.toList());
+    private MetaData wrapMetaData(ConsumerRecord<K, T> record) {
+        List<Header> headers = StreamSupport.stream(record.headers().spliterator(), false).map(HeaderForKafkaHeader::new).collect(Collectors.toList());
+        return new KafkaMetaData(headers, record.partition(), record.topic());
     }
 
-    @AllArgsConstructor
-    @Data
-    @Value
-    private static class MetaDataForKafkaHeader implements MetaData {
-
-        private Header header;
-
-        @Override
-        public String key() {
-            return header.key();
-        }
-
-        @Override
-        public <T> T value(CustomDeserializer<byte[], T> deserializer) {
-            return header.value() == null ? null : deserializer.deserialize(header.value());
-        }
-    }
-
-    private void doConsumerAction(Worker<K, T> consumer, T value, K key, Iterable<MetaData> headers) {
-        consumer.accept(key, value, headers, commander);
+    private void doConsumerAction(Worker<K, T> consumer, T value, K key, MetaData metadata) {
+        consumer.accept(key, value, metadata, commander);
     }
 
     private void handleRecordException(Exception e) {
@@ -274,7 +253,34 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         } catch (Exception e) {
             log.warn("Exception during stopping process record " + e.getMessage());
         }
-        // we still can be stuck inside processRecord method if no onStopConsumer implemented, since it could take a lot of time
+        // we still can be stuck inside processRecord method if no onStopConsumer implemented or onStopConsumer takes a lot of time, since it could take a lot of time
+    }
+
+    @AllArgsConstructor
+    @Data
+    @Value
+    private static class HeaderForKafkaHeader implements Header {
+
+        private org.apache.kafka.common.header.Header header;
+
+        @Override
+        public String key() {
+            return header.key();
+        }
+
+        @Override
+        public <T> T value(CustomDeserializer<byte[], T> deserializer) {
+            return header.value() == null ? null : deserializer.deserialize(header.value());
+        }
+    }
+
+    @AllArgsConstructor
+    @Data
+    @Value
+    private static class KafkaMetaData implements MetaData {
+        private Iterable<Header> headers;
+        private int partition;
+        private String topic;
     }
 
 }
