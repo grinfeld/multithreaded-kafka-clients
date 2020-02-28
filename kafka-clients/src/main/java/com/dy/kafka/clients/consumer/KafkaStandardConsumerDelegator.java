@@ -45,6 +45,8 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     private FlowErrorHandler flowErrorHandler;
     private boolean enableAutoCommit = true;
     private Commander commander;
+    private AtomicBoolean pause = new AtomicBoolean(false);
+    private AtomicBoolean resume = new AtomicBoolean(false);
 
     // putting shutDown executor as instance variable and initiating it during startConsume, ensures that it will be called only once during close/stopConsume process
     private ExecutorService shutDown;
@@ -177,7 +179,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     private void doConsumerAction(Worker<K, T> consumer, T value, K key, Iterable<MetaData> headers) {
-        consumer.accept(key, value, headers, null);
+        consumer.accept(key, value, headers, commander);
     }
 
     private void handleRecordException(Exception e) {
@@ -186,6 +188,12 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     private ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {
+        if (pause.getAndSet(false)) {
+            pauseConsumer();
+        }
+        if (resume.getAndSet(false)) {
+            resumeConsumer();
+        }
         return kafkaConsumer.poll(Duration.ofMillis(consumerTimeout));
     }
 
@@ -233,13 +241,22 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     public void pause() {
+        pause.set(true);
+    }
+
+    public void resume() {
+        resume.set(true);
+        pause.set(false);
+    }
+
+    void pauseConsumer() {
         if (running.get() && kafkaConsumer != null) {
             kafkaConsumer.pause(kafkaConsumer.assignment());
             MetricModule.getMetricStore().increaseCounter("consumer.paused." + this.uid);
         }
     }
 
-    public void resume() {
+    void resumeConsumer() {
         if (running.get() && kafkaConsumer != null) {
             kafkaConsumer.resume(kafkaConsumer.assignment());
             MetricModule.getMetricStore().increaseCounter("consumer.resumed." + this.uid);

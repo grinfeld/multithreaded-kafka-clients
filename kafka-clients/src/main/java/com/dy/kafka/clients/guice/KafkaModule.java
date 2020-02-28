@@ -1,6 +1,8 @@
-package com.dy.kafka.clients;
+package com.dy.kafka.clients.guice;
 
-import com.dy.kafka.clients.utils.Utils;
+import com.dy.distributed.mario.utils.ReflectionUtils;
+import com.dy.kafka.clients.KafkaMetricReporter;
+import com.dy.kafka.clients.KafkaProperties;
 import com.typesafe.config.Config;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -27,6 +29,25 @@ public class KafkaModule {
     private KafkaModule(Config config, String prefix) {
         this.config = config;
         this.prefix = Optional.ofNullable(prefix).orElse("");
+    }
+
+    public static <T> T getOrDefault(Config config, String name, T def) {
+        if (config == null) {
+            return def;
+        }
+        if (config.hasPathOrNull(name)) {
+            Object val = config.getAnyRef(name);
+            if (def != null) {
+                if (val instanceof String) {
+                    val = ReflectionUtils.parseStringValue((String)val, def.getClass());
+                }
+                if (def instanceof Long) {
+                    val = ((Number) val).longValue();
+                }
+            }
+            return (T) val;
+        }
+        return def;
     }
 
     public KafkaProperties consumerProperties() {
@@ -81,6 +102,6 @@ public class KafkaModule {
     }
 
     private <T> T getOrDefault(String name, T def) {
-        return Utils.getOrDefault(config, name, def);
+        return getOrDefault(config, name, def);
     }
 }

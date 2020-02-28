@@ -11,7 +11,6 @@ import org.apache.kafka.common.TopicPartition;
 
 import java.util.Collection;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.function.Function;
@@ -69,7 +68,6 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     private void consume(Worker<K, T> consumer) {
         ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
         latch = new CountDownLatch(1);
-        Throwable t = null;
         try {
             this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
                     .map(uid -> initConsumer(consumer, uid))
@@ -81,21 +79,11 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
                 // ignore
             }
         } catch (Exception e) {
-            t = e;
+            Utils.rethrowRuntime(e);
         } finally {
             executors.shutdown();
             resetConsumers();
-            if (t != null)
-                Utils.rethrowRuntime(t);
         }
-    }
-
-    public void pause(String uid) {
-        Optional.ofNullable(this.consumers.get(uid)).ifPresent(KafkaStandardConsumerDelegator::pause);
-    }
-
-    public void resume(String uid) {
-        Optional.ofNullable(this.consumers.get(uid)).ifPresent(KafkaStandardConsumerDelegator::resume);
     }
 
     @Override
@@ -105,7 +93,6 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
         } finally {
             resetConsumers();
         }
-
     }
 
     private void resetConsumers() {
