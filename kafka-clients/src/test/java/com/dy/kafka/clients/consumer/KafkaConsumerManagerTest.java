@@ -1,5 +1,6 @@
 package com.dy.kafka.clients.consumer;
 
+import com.dy.kafka.clients.KafkaMetricReporter;
 import com.dy.kafka.clients.KafkaProperties;
 import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
 import com.dy.kafka.clients.consumer.model.MetaData;
@@ -17,7 +18,9 @@ import net.manub.embeddedkafka.EmbeddedK;
 import net.manub.embeddedkafka.EmbeddedKafka;
 import net.manub.embeddedkafka.EmbeddedKafkaConfig;
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.serialization.Deserializer;
@@ -76,9 +79,11 @@ class KafkaConsumerManagerTest {
 
     @BeforeAll
     void startKafka() {
-        Properties kafkaProps = new Properties();
-        kafkaProps.putAll(defProps);
-        KafkaProperties kafkaProperties = KafkaProperties.builder().timeout(5L).properties(kafkaProps).build();
+        Properties producerProps = new Properties();
+        producerProps.putAll(defProps);
+        producerProps.put(ProducerConfig.METRIC_REPORTER_CLASSES_CONFIG, KafkaMetricReporter.class.getName());
+        producerProps.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "producer_");
+        KafkaProperties kafkaProperties = KafkaProperties.builder().timeout(5L).properties(producerProps).build();
 
         kafka = EmbeddedKafka.start(EmbeddedKafkaConfig.apply(6001, 6000, new HashMap<>(), new HashMap<>(), new HashMap<>()));
         // kafka.broker().adminManager().createTopics(10, true, );
@@ -88,13 +93,15 @@ class KafkaConsumerManagerTest {
     void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties) {
         resetAllMocks();
 
-        Properties kafkaProps = new Properties();
-        kafkaProps.putAll(defProps);
+        Properties consumerProps = new Properties();
+        consumerProps.putAll(defProps);
         if (additionalProperties != null) {
-            kafkaProps.putAll(additionalProperties);
+            consumerProps.putAll(additionalProperties);
         }
+        consumerProps.put(ConsumerConfig.METRIC_REPORTER_CLASSES_CONFIG, KafkaMetricReporter.class.getName());
+        consumerProps.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "consumer_");
 
-        KafkaProperties props = KafkaProperties.builder().topic(topicName).timeout(5L).properties(kafkaProps).build();
+        KafkaProperties props = KafkaProperties.builder().topic(topicName).timeout(5L).properties(consumerProps).build();
 
         consumer = spy(new KafkaStandardConsumerDelegator<>(null, props, deSerializer, lifecycleConsumerElements));
         manager = spy(new KafkaConsumerManager<>(1, props, deSerializer, lifecycleConsumerElements));

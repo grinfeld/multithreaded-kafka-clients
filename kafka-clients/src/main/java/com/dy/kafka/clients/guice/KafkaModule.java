@@ -78,7 +78,7 @@ public class KafkaModule {
         if (requestInterval != null)
             props.put(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG, requestInterval);
         props.put(ConsumerConfig.METRIC_REPORTER_CLASSES_CONFIG, KafkaMetricReporter.class.getName());
-        props.put("METRIC_PREFIX", "consumer_");
+        props.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "consumer_");
         return props;
     }
 
