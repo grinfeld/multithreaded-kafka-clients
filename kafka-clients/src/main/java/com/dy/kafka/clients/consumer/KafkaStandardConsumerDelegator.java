@@ -15,6 +15,7 @@ import org.apache.kafka.common.serialization.Deserializer;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -40,8 +41,9 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     private FlowErrorHandler flowErrorHandler;
     private boolean enableAutoCommit = true;
     private Commander commander;
-    private AtomicBoolean pause = new AtomicBoolean(false);
-    private AtomicBoolean resume = new AtomicBoolean(false);
+
+    private Map<Integer, AtomicBoolean> pausePartitions = new ConcurrentHashMap<>();
+    private Map<Integer, AtomicBoolean> resumePartitions = new ConcurrentHashMap<>();
 
     // putting shutDown executor as instance variable and initiating it during startConsume, ensures that it will be called only once during close/stopConsume process
     private ExecutorService shutDown;
@@ -73,19 +75,27 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
         this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(new FlowErrorHandler() {});
         this.commander = new Commander() {
-            @Override public void resume(MetaData metaData) { KafkaStandardConsumerDelegator.this.resume(); }
-
-            @Override public void pause(MetaData metaData, Duration duration) {
-                scheduleResume(duration);
-                KafkaStandardConsumerDelegator.this.pause();
+            @Override
+            public void resume(MetaData metaData) {
+                if (metaData instanceof KafkaMetaData)
+                    KafkaStandardConsumerDelegator.this.resume(((KafkaMetaData)metaData).getPartition());
             }
 
-            private void scheduleResume(Duration duration) {
+            @Override
+            public void pause(MetaData metaData, Duration duration) {
+                if (metaData instanceof KafkaMetaData) {
+                    scheduleResume((KafkaMetaData) metaData, duration);
+                    KafkaStandardConsumerDelegator.this.pause(((KafkaMetaData) metaData).getPartition());
+                }
+
+            }
+
+            private void scheduleResume(KafkaMetaData metaData, Duration duration) {
                 if (duration != null) {
                     new Timer().schedule(new TimerTask() {
                         @Override
                         public void run() {
-                            resume(null);
+                            KafkaStandardConsumerDelegator.this.resume(metaData.getPartition());
                         }
                     }, duration.toMillis());
                 }
@@ -105,7 +115,15 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         MetricModule.getMetricStore().increaseCounter("subscribed." + consumerTopic,
             () -> kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener)
         );
+        initPauseResumeState();
         runPoll(consumer);
+    }
+
+    private void initPauseResumeState() {
+        pausePartitions = kafkaConsumer.assignment().stream().collect(Collectors.toMap(TopicPartition::partition,
+                t -> new AtomicBoolean(false), (k1, k2) -> k1, ConcurrentHashMap::new));
+        resumePartitions = kafkaConsumer.assignment().stream().collect(Collectors.toMap(TopicPartition::partition,
+                t -> new AtomicBoolean(false), (k1, k2) -> k1, ConcurrentHashMap::new));
     }
 
     private void runPoll(Worker<K, T> consumer) {
@@ -165,13 +183,28 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     }
 
     private ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {
-        if (pause.getAndSet(false)) {
-            pauseConsumer();
-        }
-        if (resume.getAndSet(false)) {
-            resumeConsumer();
-        }
+        pausePartitions(kafkaConsumer);
+        resumePartitions(kafkaConsumer);
         return kafkaConsumer.poll(Duration.ofMillis(consumerTimeout));
+    }
+
+    void resumePartitions(Consumer<?, ?> kafkaConsumer) {
+        List<TopicPartition> partitions = findPartitionsToWorkOn(kafkaConsumer.assignment(), resumePartitions);
+        if (!partitions.isEmpty())
+            kafkaConsumer.resume(partitions);
+    }
+
+    void pausePartitions(Consumer<?, ?> kafkaConsumer) {
+        List<TopicPartition> partitions = findPartitionsToWorkOn(kafkaConsumer.assignment(), pausePartitions);
+        if (!partitions.isEmpty())
+            kafkaConsumer.pause(partitions);
+    }
+
+    private List<TopicPartition> findPartitionsToWorkOn(Set<TopicPartition> partitions, Map<Integer, AtomicBoolean> stateMap) {
+        return partitions.stream().filter(tp -> stateMap.containsKey(tp.partition()))
+                // .getAndSet(false) -> functional with side affect. Do we have another option?
+                .filter(tp -> stateMap.get(tp.partition()).getAndSet(false))
+                .collect(Collectors.toList());
     }
 
     void commitOffset(ConsumerRecord<K, T> record, Consumer<?, ?> consumer) {
@@ -217,28 +250,35 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
     }
 
-    public void pause() {
-        resume.set(false);
-        pause.set(true);
-    }
-
-    public void resume() {
-        resume.set(true);
-        pause.set(false);
-    }
-
-    void pauseConsumer() {
-        if (running.get() && kafkaConsumer != null) {
-            kafkaConsumer.pause(kafkaConsumer.assignment());
-            MetricModule.getMetricStore().increaseCounter("consumer.paused." + this.uid);
+    public void resume(int partition) {
+        if (!isRunning()) {
+            return;
+        }
+        AtomicBoolean pausePartition = pausePartitions.get(partition);
+        AtomicBoolean resumePartition = resumePartitions.get(partition);
+        if (pausePartition != null && resumePartition != null) {
+            resumePartition.set(true);
+            pausePartition.set(false);
+            MetricModule.getMetricStore().increaseCounter("consumer.resumed." + partition);
         }
     }
 
-    void resumeConsumer() {
-        if (running.get() && kafkaConsumer != null) {
-            kafkaConsumer.resume(kafkaConsumer.assignment());
-            MetricModule.getMetricStore().increaseCounter("consumer.resumed." + this.uid);
+    public void pause(int partition) {
+        if (!isRunning()) {
+            return;
         }
+        AtomicBoolean pausePartition = pausePartitions.get(partition);
+        AtomicBoolean resumePartition = resumePartitions.get(partition);
+        if (pausePartition != null && resumePartition != null) {
+            // todo: order????
+            pausePartition.set(true);
+            resumePartition.set(false);
+            MetricModule.getMetricStore().increaseCounter("consumer.paused." + partition);
+        }
+    }
+
+    private boolean isRunning() {
+        return running.get() && kafkaConsumer != null;
     }
 
     public void stopConsume() {
@@ -251,6 +291,8 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             shutDown.awaitTermination(Integer.MAX_VALUE, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             log.warn("Exception during stopping process record " + e.getMessage());
+        } finally {
+            MetricModule.getMetricStore().increaseCounter("consumer.stopped." + this.uid);
         }
         // we still can be stuck inside processRecord method if no onStopConsumer implemented or onStopConsumer takes a lot of time, since it could take a lot of time
     }
