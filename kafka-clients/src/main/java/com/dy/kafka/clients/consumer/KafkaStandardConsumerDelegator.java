@@ -41,12 +41,13 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     private FlowErrorHandler flowErrorHandler;
     private boolean enableAutoCommit = true;
     private Commander commander;
+    private ExternalWorker onCommit;
 
     private Map<Integer, AtomicBoolean> pausePartitions = new ConcurrentHashMap<>();
     private Map<Integer, AtomicBoolean> resumePartitions = new ConcurrentHashMap<>();
 
     // putting shutDown executor as instance variable and initiating it during startConsume, ensures that it will be called only once during close/stopConsume process
-    private ExecutorService shutDown;
+    private ExecutorService externalWorkExecutor;
 
     public KafkaStandardConsumerDelegator(String uid, KafkaProperties properties, KeyValueDeserializer<K, T> keyValueDeserializer,
                                           LifecycleConsumerElements lifecycleConsumerElements) {
@@ -62,9 +63,12 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         }
 
         // the default (latest version) ENABLE_AUTO_COMMIT_CONFIG is true, we want to ensure that this value set - not depend on kafka-clients version
-        // later we shouldn't commit manually in case of enableAutoCommit property set false (thw default is true)
+        // later we shouldn't commit manually in case of enableAutoCommit property not set (the default is true) or set to true
         this.enableAutoCommit = !"false".equalsIgnoreCase((String)this.consumerProperties.get(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG));
         this.consumerProperties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, String.valueOf(enableAutoCommit));
+        if (enableAutoCommit) {
+            log.info("auto commit enabled, means commit is async only and callback onCommit not executed");
+        }
 
         this.consumerTopic = properties.getTopic();
         lifecycleConsumerElements = Optional.ofNullable(lifecycleConsumerElements).orElse(DEF_LIFECYCLE_ELEMENTS);
@@ -73,7 +77,10 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         this.onStop = Optional.ofNullable(lifecycleConsumerElements.onStop()).orElse(LifecycleConsumerElements.ON_CONSUMER_STOP_DEF);
         this.valueDeserializer = keyValueDeserializer.valueDeSerializer();
         this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
-        this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(new FlowErrorHandler() {});
+        this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(LifecycleConsumerElements.DEF_ON_FLOW_ERROR_HANDLER);
+        // relevant only in case of enable.auto.commit = false
+        this.onCommit = Optional.ofNullable(lifecycleConsumerElements.onCommit()).orElse(LifecycleConsumerElements.DEF_EXT_WORKER);
+
         this.commander = new Commander() {
             @Override
             public void resume(MetaData metaData) {
@@ -110,7 +117,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         if (currentRunning)
             return;
         initConsumer();
-        shutDown = Executors.newSingleThreadExecutor();
+        externalWorkExecutor = Executors.newSingleThreadExecutor();
         //kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener);
         MetricModule.getMetricStore().increaseCounter("subscribed." + consumerTopic,
             () -> kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener)
@@ -170,7 +177,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
 
     private MetaData wrapMetaData(ConsumerRecord<K, T> record) {
         List<Header> headers = StreamSupport.stream(record.headers().spliterator(), false).map(HeaderForKafkaHeader::new).collect(Collectors.toList());
-        return new KafkaMetaData(headers, record.partition(), record.topic());
+        return new KafkaMetaData(headers, record.partition(), record.topic(), record.offset());
     }
 
     private void doConsumerAction(Worker<K, T> consumer, T value, K key, MetaData metadata) {
@@ -209,11 +216,13 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
 
     void commitOffset(ConsumerRecord<K, T> record, Consumer<?, ?> consumer) {
         Map<TopicPartition, OffsetAndMetadata> metadata = getCommitMetadata(record);
+        MetaData onCommitData = wrapMetaData(record);
         try {
             commitSync(consumer, metadata);
+            externalWorkExecutor.submit(() -> onCommit.work(onCommitData));
         } catch (Exception e) {
-            if (running.get() && !enableAutoCommit) {
-                commitOffsetAsync(consumer, metadata);
+            if (running.get()) {
+                commitOffsetAsync(consumer, metadata, onCommitData);
             } else
                 throw e;
         }
@@ -224,11 +233,15 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         consumer.commitSync(metadata, Duration.ofMillis(500));
     }
 
-    void commitOffsetAsync(Consumer<?, ?> consumer, Map<TopicPartition, OffsetAndMetadata> metadata) {
-        consumer.commitAsync(metadata, (offsets, exception) ->
-                Optional.ofNullable(exception)
-                        .ifPresent(ex -> log.error("Failed to commit, both async and sync with {}", ex.getMessage()))
-        );
+    void commitOffsetAsync(Consumer<?, ?> consumer, Map<TopicPartition, OffsetAndMetadata> metadata, MetaData onCommitData) {
+        consumer.commitAsync(metadata, (offsets, exception) -> {
+            if (exception == null) {
+                // since, this one is async, not using externalWorkExecutor
+                onCommit.work(onCommitData);
+            } else {
+                log.error("Failed to commit, both async and sync with {}", exception.getMessage());
+            }
+        });
     }
 
     private Map<TopicPartition, OffsetAndMetadata> getCommitMetadata(ConsumerRecord<K, T> record) {
@@ -285,10 +298,10 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         running.set(false);
         silentClose();
         try {
-            shutDown.submit(onStop::onStop);
-            shutDown.shutdown();
+            externalWorkExecutor.submit(onStop::onStop);
+            externalWorkExecutor.shutdown();
             // todo: should be replaced with some configurable (and much less) value
-            shutDown.awaitTermination(Integer.MAX_VALUE, TimeUnit.MILLISECONDS);
+            externalWorkExecutor.awaitTermination(Integer.MAX_VALUE, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             log.warn("Exception during stopping process record " + e.getMessage());
         } finally {
@@ -322,6 +335,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         private Iterable<Header> headers;
         private int partition;
         private String topic;
+        private long offset;
     }
 
 }

@@ -4,6 +4,7 @@ import com.dy.kafka.clients.KafkaMetricReporter;
 import com.dy.kafka.clients.KafkaProperties;
 import com.dy.kafka.clients.consumer.model.LifecycleConsumerElements;
 import com.dy.kafka.clients.consumer.model.Header;
+import com.dy.kafka.clients.consumer.model.MetaData;
 import com.dy.kafka.clients.consumer.model.Worker;
 import com.dy.kafka.clients.producer.KafkaProducerDelegator;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
@@ -139,7 +140,7 @@ class KafkaConsumerManagerTest {
         future.get();
 
         verify(consumer, times(1)).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
-        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
+        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class), any(MetaData.class));
     }
 
     @Test
@@ -156,7 +157,7 @@ class KafkaConsumerManagerTest {
         future.get();
 
         verify(consumer, never()).commitSync(any(Consumer.class), anyMap());
-        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), anyMap());
+        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), anyMap(), any(MetaData.class));
     }
 
     @Test
@@ -175,7 +176,7 @@ class KafkaConsumerManagerTest {
         future.get();
 
         verify(consumer, times(1)).commitSync(any(Consumer.class), anyMap());
-        verify(consumer, times(1)).commitOffsetAsync(any(Consumer.class), anyMap());
+        verify(consumer, times(1)).commitOffsetAsync(any(Consumer.class), anyMap(), any(MetaData.class));
     }
 
     @Test
@@ -239,7 +240,7 @@ class KafkaConsumerManagerTest {
         future.get();
 
         verify(consumer, never()).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
-        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class));
+        verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class), any(MetaData.class));
         verify(lifecycle.flowErrorHandler(), times(1)).doOnError(any(Throwable.class));
     }
 
