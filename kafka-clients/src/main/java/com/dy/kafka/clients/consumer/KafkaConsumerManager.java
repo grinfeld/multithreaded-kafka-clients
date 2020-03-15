@@ -103,6 +103,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     static class MultiThreadedRebalanceListener<K, T> implements ConsumerRebalanceListener {
         private Worker<K, T> consumer;
         private KafkaConsumerManager<K, T> manager;
+        private final Object lock = new Object();
 
         public MultiThreadedRebalanceListener(Worker<K, T> consumer, KafkaConsumerManager<K, T> manager) {
             this.consumer = consumer;
@@ -111,13 +112,19 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
 
         @Override
         public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
-            manager.stopConsume();
+            synchronized (lock) {
+                manager.stopConsume();
+            }
         }
+
+        // todo: should I deal with initial state, a.k.k.a checking if partition assignment is initial or came after revoke ????
 
         @Override
         public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
-            // todo: check partitions, which only not already assigned
-            manager.consume(consumer);
+            synchronized (lock) {
+                // todo: check partitions, which only not already assigned
+                manager.consume(consumer);
+            }
         }
     }
 
