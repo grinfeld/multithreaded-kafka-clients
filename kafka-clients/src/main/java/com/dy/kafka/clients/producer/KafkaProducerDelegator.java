@@ -35,7 +35,11 @@ public class KafkaProducerDelegator<K, T> {
     }
 
     public Future<RecordMetadata> send(String topicName, K key, T value, Callback callback, Headers headers) {
-        ProducerRecord<K, T> producerRecord = new ProducerRecord<>(topicName, null, key, value, Optional.ofNullable(headers).orElseGet(RecordHeaders::new));
+        return send(topicName, null, key, value, callback, headers);
+    }
+
+    public Future<RecordMetadata> send(String topicName, Integer partition, K key, T value, Callback callback, Headers headers) {
+        ProducerRecord<K, T> producerRecord = new ProducerRecord<>(topicName, partition, key, value, Optional.ofNullable(headers).orElseGet(RecordHeaders::new));
         return producer.send(producerRecord, callback);
     }
 }

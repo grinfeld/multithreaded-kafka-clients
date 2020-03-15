@@ -24,22 +24,31 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.apache.kafka.common.message.CreateTopicsRequestData;
+import org.apache.kafka.common.message.CreateTopicsResponseData;
+import org.apache.kafka.common.requests.ApiError;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.*;
-import scala.collection.immutable.HashMap;
+import scala.Function1;
+import scala.Predef;
+import scala.collection.JavaConverters$;
+import scala.jdk.CollectionConverters$;
+import scala.runtime.AbstractFunction1;
+import scala.runtime.BoxedUnit;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -86,12 +95,15 @@ class KafkaConsumerManagerTest {
         producerProps.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "producer_");
         KafkaProperties kafkaProperties = KafkaProperties.builder().timeout(5L).properties(producerProps).build();
 
-        kafka = EmbeddedKafka.start(EmbeddedKafkaConfig.apply(6001, 6000, new HashMap<>(), new HashMap<>(), new HashMap<>()));
-        // kafka.broker().adminManager().createTopics(10, true, );
+        Map<String, String> map = new HashMap<>();
+        map.put("auto.create.topics.enable", "false");
+
+        kafka = EmbeddedKafka.start(EmbeddedKafkaConfig.apply(6001, 6000, JavaConverters$.MODULE$.mapAsScalaMap(map).toMap(Predef.conforms()), new scala.collection.immutable.HashMap<>(), new scala.collection.immutable.HashMap<>()));
+
         producer = new KafkaProducerDelegator<>(kafkaProperties, new StringSerializer(), new JsonSerializer<>(GSON));
     }
 
-    void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties, KeyValueDeserializer<String, TestObj> deSerializer) {
+    void initConsumer(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties, KeyValueDeserializer<String, TestObj> deSerializer, int numPartitions) throws Exception {
         resetAllMocks();
 
         Properties consumerProps = new Properties();
@@ -101,16 +113,58 @@ class KafkaConsumerManagerTest {
         }
         consumerProps.put(ConsumerConfig.METRIC_REPORTER_CLASSES_CONFIG, KafkaMetricReporter.class.getName());
         consumerProps.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "consumer_");
-
+        createTopic(numPartitions);
         KafkaProperties props = KafkaProperties.builder().topic(topicName).timeout(5L).properties(consumerProps).build();
 
         consumer = spy(new KafkaStandardConsumerDelegator<>(null, props, deSerializer, lifecycleConsumerElements));
-        manager = spy(new KafkaConsumerManager<>(1, props, deSerializer, lifecycleConsumerElements));
+        manager = spy(new KafkaConsumerManager<>(numPartitions, props, deSerializer, lifecycleConsumerElements));
+    }
+
+    void initManagerOnly(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties, KeyValueDeserializer<String, TestObj> deSerializer, int numPartitions) throws Exception {
+        resetAllMocks();
+
+        Properties consumerProps = new Properties();
+        consumerProps.putAll(defProps);
+        if (additionalProperties != null) {
+            consumerProps.putAll(additionalProperties);
+        }
+        consumerProps.put(ConsumerConfig.METRIC_REPORTER_CLASSES_CONFIG, KafkaMetricReporter.class.getName());
+        consumerProps.put(KafkaMetricReporter.METRIC_PREFIX_CONFIG, "consumer_");
+        createTopic(numPartitions);
+        KafkaProperties props = KafkaProperties.builder().topic(topicName).timeout(5L).properties(consumerProps).build();
+        manager = spy(new KafkaConsumerManager<>(numPartitions, props, deSerializer, lifecycleConsumerElements));
     }
     
     @BeforeEach
     void generateTopicName() {
         topicName = "test" + System.currentTimeMillis() + "_" + random.nextInt(100);
+    }
+
+    private void createTopic(int numPartitions) throws Exception {
+        CreateTopicsRequestData.CreatableTopic creatableTopic =
+                new CreateTopicsRequestData.CreatableTopic().setName(topicName).setNumPartitions(numPartitions).setReplicationFactor((short)1);
+
+        Map<String, CreateTopicsRequestData.CreatableTopic> map = new HashMap<>();
+        map.put(topicName, creatableTopic);
+        Map<String, CreateTopicsResponseData.CreatableTopicResult> map1 = new HashMap<>();
+        Function1<scala.collection.Map<String, ApiError>, BoxedUnit> someFunc1 = new AbstractFunction1<scala.collection.Map<String, ApiError>, BoxedUnit>() {
+            @Override
+            public BoxedUnit apply(scala.collection.Map<String, ApiError> v1) {
+                Map<String, ApiError> errorMap = JavaConverters$.MODULE$.mapAsJavaMap(v1);
+                for (ApiError error : errorMap.values()) {
+                    if (error.isFailure()) {
+                        fail(error.exception());
+                    }
+                }
+                return BoxedUnit.UNIT;
+            }
+        };
+        Thread.sleep(10000L); // TODO: fins the way to know when kafka is ready
+        scala.collection.mutable.Map<String, CreateTopicsResponseData.CreatableTopicResult> responses1 = CollectionConverters$.MODULE$.mapAsScalaMap(map1);
+        kafka.broker().adminManager().createTopics(100, false,
+                CollectionConverters$.MODULE$.mapAsScalaMap(map),
+                responses1,
+                someFunc1);
     }
 
     @Test
@@ -130,7 +184,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=false, when consuming message performed successfully, expected commit kafka offset synchronously")
     void withAutoCommitFalse_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(false), deSerializer);
+        initConsumer(null, createAutocommitProperty(false), deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -145,9 +199,37 @@ class KafkaConsumerManagerTest {
 
     @Test
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
+    @DisplayName("sending2differentPartitions")
+    void sending2differentPartitions() throws Exception {
+        List<Integer> partitions = new ArrayList<>();
+        AtomicInteger counter = new AtomicInteger(0);
+        initManagerOnly(null, createAutocommitProperty(false), deSerializer, 2);
+
+        FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
+        //doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
+
+        Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> {
+            partitions.add( ((KafkaStandardConsumerDelegator.KafkaMetaData)metaData).getPartition());
+            if (counter.incrementAndGet() > 1)
+                future.run();
+        };
+        Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
+
+        producer.send(topicName, 0, "Stam", new TestObj("testme"), null, null);
+        producer.send(topicName, 1, "Stam1", new TestObj("testme1"), null, null);
+        future.get();
+
+        assertThat(partitions).isNotEmpty().hasSize(2).containsExactlyInAnyOrder(0,1);
+
+        //verify(consumer, times(2)).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
+        //verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class), any(MetaData.class));
+    }
+
+    @Test
+    @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=true, when consuming message performed successfully, expected commit kafka offset synchronously")
     void withAutoCommitTrue_whenConsumeDataPerformedOk_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(true), deSerializer);
+        initConsumer(null, createAutocommitProperty(true), deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -164,7 +246,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with enable.auto.commit=false, when consuming message performed successfully and commitSync fails, expected commit kafka offset synchronously")
     void withAutoCommitFalse_whenConsumeDataPerformedOkCommitSyncFails_expectedCommitOffsetSucceeded() throws Exception {
-        initConsumer(null, createAutocommitProperty(false), deSerializer);
+        initConsumer(null, createAutocommitProperty(false), deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
         doThrow(new RuntimeException()).when(consumer).commitSync(any(Consumer.class), anyMap());
@@ -183,7 +265,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("with sending header, when consuming message performed successfully, expected received same header")
     void withSendingHeaders_whenConsumeDataPerformedOk_expectedHeadersReceived() throws Exception {
-        initConsumer(null, null, deSerializer);
+        initConsumer(null, null, deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -228,7 +310,7 @@ class KafkaConsumerManagerTest {
     void whenConsumeThrowsException_expectedNoCommitOffsetPerformed() throws Exception {
         LifecycleConsumerElements lifecycle = LifecycleConsumerElements.builder().flowErrorHandler(lifecycleMocks.flowErrorHandler()).build();
         doNothing().when(lifecycle.flowErrorHandler()).doOnError(any(Throwable.class));
-        initConsumer(lifecycle, null, deSerializer);
+        initConsumer(lifecycle, null, deSerializer, 3);
 
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
@@ -249,7 +331,7 @@ class KafkaConsumerManagerTest {
     @DisplayName("when stopping to consume gracefully, expected calling stop consume on consumer and onStop")
     void whenManagerCloses_expectedConsumerCloseAndOnStopInvoked() throws Exception {
         LifecycleConsumerElements lifecycle = lifecycleMocks.toBuilder().build();
-        initConsumer(lifecycle, null, deSerializer);
+        initConsumer(lifecycle, null, deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -268,7 +350,7 @@ class KafkaConsumerManagerTest {
     @DisplayName("when trying to startConsume, when not all previously started consumers stopped, expected RuntimeException to be thrown, and not calling onStop") // since we didn't start to consume again
     void whenManagerStartsConsumeAndNotAllConsumersClosed_expectedRuntimeException() throws Exception {
         LifecycleConsumerElements lifecycle = LifecycleConsumerElements.builder().onConsumerStop(lifecycleMocks.onStop()).build();
-        initConsumer(lifecycle, null, deSerializer);
+        initConsumer(lifecycle, null, deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
@@ -284,7 +366,7 @@ class KafkaConsumerManagerTest {
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("when consumer already working and trying to start it again before it closed, expected the second start attempt is ignored")
     void whenTryingToStartConsumeAgainOnWorkingConsumer_expectedIgnoredTheSecondTime() throws Exception {
-        initConsumer(null, null, deSerializer);
+        initConsumer(null, null, deSerializer, 3);
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
         doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 

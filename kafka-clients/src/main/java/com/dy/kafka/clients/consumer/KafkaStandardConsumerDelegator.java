@@ -331,7 +331,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
     @AllArgsConstructor
     @Data
     @Value
-    private static class KafkaMetaData implements MetaData {
+    public static class KafkaMetaData implements MetaData {
         private Iterable<Header> headers;
         private int partition;
         private String topic;
