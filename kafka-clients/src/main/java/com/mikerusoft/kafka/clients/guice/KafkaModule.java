@@ -64,7 +64,7 @@ public class KafkaModule {
         final Properties props = new Properties();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, config.getString(prefix + "bootstrap.servers"));
         props.put(ConsumerConfig.GROUP_ID_CONFIG, config.getString(prefix + "consumer.properties.group.id"));
-        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, getOrDefault(prefix + "consumer.properties.enable.auto.commit",true));
+        props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, getOrDefault(prefix + "consumer.properties.enable.auto.commit",false));
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, getOrDefault(prefix + "consumer.properties.auto.offset.reset", "earliest")); // latest, earliest
         props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, getOrDefault(prefix + "consumer.properties.max.poll.records", DEF_MAX_POLL_RECORDS));
         int maxPollInterval = getOrDefault(prefix + "consumer.properties.max.poll.interval.ms", DEF_MAX_POLL_INTERVAL_MS.intValue());
