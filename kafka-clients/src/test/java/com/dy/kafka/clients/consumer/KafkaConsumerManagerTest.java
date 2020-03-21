@@ -96,7 +96,7 @@ class KafkaConsumerManagerTest {
         KafkaProperties kafkaProperties = KafkaProperties.builder().timeout(5L).properties(producerProps).build();
 
         Map<String, String> map = new HashMap<>();
-        //map.put("auto.create.topics.enable", "false");
+        map.put("auto.create.topics.enable", "false");
 
         kafka = EmbeddedKafka.start(EmbeddedKafkaConfig.apply(6001, 6000, JavaConverters$.MODULE$.mapAsScalaMap(map).toMap(Predef.conforms()), new scala.collection.immutable.HashMap<>(), new scala.collection.immutable.HashMap<>()));
 
@@ -117,7 +117,7 @@ class KafkaConsumerManagerTest {
         KafkaProperties props = KafkaProperties.builder().topic(topicName).timeout(5L).properties(consumerProps).build();
 
         consumer = spy(new KafkaStandardConsumerDelegator<>(UUID.randomUUID().toString(), props, deSerializer, lifecycleConsumerElements));
-        manager = spy(new KafkaConsumerManager<>(numPartitions, props, deSerializer, lifecycleConsumerElements));
+        manager = spy(new KafkaConsumerManager<>(1, props, deSerializer, lifecycleConsumerElements));
     }
 
     void initManagerOnly(LifecycleConsumerElements lifecycleConsumerElements, Properties additionalProperties, KeyValueDeserializer<String, TestObj> deSerializer, int numPartitions) throws Exception {
@@ -140,7 +140,7 @@ class KafkaConsumerManagerTest {
         topicName = "test" + System.currentTimeMillis() + "_" + random.nextInt(100);
     }
 
-    private void createTopic(int numPartitions) throws Exception {
+    private void createTopic(int numPartitions) {
         CreateTopicsRequestData.CreatableTopic creatableTopic =
                 new CreateTopicsRequestData.CreatableTopic().setName(topicName).setNumPartitions(numPartitions).setReplicationFactor((short)1);
 
@@ -197,16 +197,15 @@ class KafkaConsumerManagerTest {
         verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class), any(MetaData.class));
     }
 
-    //@Test
+    @Test
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     @DisplayName("sending2differentPartitions")
-    void sending2differentPartitions() throws Exception {
+    void when2partitionsAnd2Threads_expected2Consumers() throws Exception {
         List<Integer> partitions = new ArrayList<>();
         AtomicInteger counter = new AtomicInteger(0);
         initManagerOnly(null, createAutocommitProperty(false), deSerializer, 2);
 
         FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
-        //doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
 
         Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> {
             partitions.add( ((KafkaStandardConsumerDelegator.KafkaMetaData)metaData).getPartition());
@@ -220,9 +219,7 @@ class KafkaConsumerManagerTest {
         future.get();
 
         assertThat(partitions).isNotEmpty().hasSize(2).containsExactlyInAnyOrder(0,1);
-
-        //verify(consumer, times(2)).commitOffset(any(ConsumerRecord.class), any(Consumer.class));
-        //verify(consumer, never()).commitOffsetAsync(any(Consumer.class), any(Map.class), any(MetaData.class));
+        assertThat(manager.getConsumers()).hasSize(2);
     }
 
     @Test
@@ -284,25 +281,6 @@ class KafkaConsumerManagerTest {
         future.get();
     }
 
-/*    @Test
-    @Timeout(value = 10L, unit = TimeUnit.SECONDS)
-    @DisplayName("when consuming message performed successfully and called paused, expected consumer paused")
-    void whenConsumeDataPerformedOkAndCallingPause_expectedPauseCalled() throws Exception {
-        initConsumer(null, null, deSerializer);
-        FutureTask<TestObj> future = new FutureTask<>(() -> new TestObj("testme"));
-        doReturn(consumer).when(manager).createKafkaConsumer(anyString(), any(LifecycleConsumerElements.class));
-
-        Worker<String, TestObj> biConsumer = (s, testObj, metaData, commander) -> { commander.pause(null); future.run(); };
-
-        Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
-        Headers headers = new RecordHeaders();
-        headers.add("header", "myheader".getBytes(StandardCharsets.UTF_8));
-        producer.send(topicName, "Stam", new TestObj("testme"), null, headers);
-        future.get();
-
-        verify(consumer, times(1)).pausePartitions(any(KafkaConsumer.class));
-    }*/
-
     @Test
     @Timeout(value = 10L, unit = TimeUnit.SECONDS)
     // it means, that we have possible duplications
@@ -339,7 +317,8 @@ class KafkaConsumerManagerTest {
         Executors.newSingleThreadExecutor().execute(() -> manager.startConsume(biConsumer));
         producer.send(topicName, "Stam", new TestObj("testme"), null, null);
         future.get();
-        manager.close();
+
+        manager.closeWait().get();
 
         verify(consumer, times(1)).stopConsume();
         verify(lifecycle.onStop(), times(1)).onStop();
@@ -384,9 +363,8 @@ class KafkaConsumerManagerTest {
         if (consumer != null)
             consumer.close();
         if (manager != null)
-            manager.close();
+            manager.closeWait().get(5, TimeUnit.SECONDS);
         resetAllMocks();
-        Thread.sleep(5L);
     }
 
     @AfterAll

@@ -26,6 +26,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     private AtomicBoolean stop = new AtomicBoolean(false);
     private AtomicBoolean running = new AtomicBoolean(false);
     private CountDownLatch latch;
+    private FutureTask<Boolean> closeFuture;
 
     public KafkaConsumerManager(int numOfThreads, KafkaProperties properties,
                 KeyValueDeserializer<K, T> keyValueDeserializer, LifecycleConsumerElements lifecycleConsumerElements) {
@@ -34,6 +35,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
         this.keyValueDeserializer = keyValueDeserializer;
         this.consumers = new ConcurrentHashMap<>();
         this.lifecycleConsumerElements = lifecycleConsumerElements;
+        this.closeFuture = new FutureTask<Boolean>(() -> true);
     }
 
     @Override
@@ -64,33 +66,34 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     private void consume(Worker<K, T> consumer) {
         if (running.getAndSet(true))
             return;
-        while(!stop.get()) {
-            // todo: we initialize too much objects - could be replaced with different, more efficient way?
-            ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
-            latch = new CountDownLatch(1);
-            try {
-                this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
-                        .map(uid -> initConsumer(consumer, uid))
-                        .collect(Collectors.toMap(KafkaStandardConsumerDelegator::getUid, Function.identity()));
-                for (KafkaConsumerDelegator<K, T> kafkaConsumer : consumers.values()) {
-                    executors.submit(() -> kafkaConsumer.startConsume(consumer));
-                }
+        try {
+            while (!stop.get()) {
+                // todo: we initialize too much objects - could be replaced with different, more efficient way?
+                ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
+                latch = new CountDownLatch(1);
                 try {
-                    latch.await();
-                } catch (Exception ignore) {
-                    // ignore
+                    this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
+                            .map(uid -> initConsumer(consumer, uid))
+                            .peek(c -> executors.submit(() -> c.startConsume(consumer)))
+                            .collect(Collectors.toMap(KafkaStandardConsumerDelegator::getUid, Function.identity()));
+                    try {
+                        latch.await();
+                    } catch (Exception ignore) {
+                        // ignore
+                    }
+                } catch (Exception e) {
+                    Utils.rethrowRuntime(e);
+                } finally {
+                    executors.shutdown();
                 }
-            } catch (Exception e) {
-                log.error("", e);
-                Utils.rethrowRuntime(e);
-            } finally {
-                executors.shutdown();
-                stopConsume();
             }
+        } finally {
+            stopConsume();
+            closeFuture.run();
         }
     }
 
-    public void stopConsume() {
+    private void stopConsume() {
         try {
             consumers.forEach((id, consumer) -> stopSingleConsumer(consumer));
         } finally {
@@ -120,6 +123,11 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
             // ignoring
         }
         running.set(false);
+    }
+
+    Future<Boolean> closeWait() throws Exception {
+        close();
+        return this.closeFuture;
     }
 
     Collection<KafkaStandardConsumerDelegator<K,T>> getConsumers() {
