@@ -13,6 +13,7 @@ import org.apache.kafka.clients.consumer.*;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.Deserializer;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,6 +54,21 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                                           LifecycleConsumerElements lifecycleConsumerElements) {
         // if it's single consumer - it could be null or empty string
         this.uid = Optional.ofNullable(uid).orElse("");
+        initProperties(properties);
+        this.consumerTopic = properties.getTopic();
+        lifecycleConsumerElements = Optional.ofNullable(lifecycleConsumerElements).orElse(DEF_LIFECYCLE_ELEMENTS);
+        this.consumerTimeout = properties.getTimeout() > 0 ? properties.getTimeout() : Integer.MAX_VALUE;
+        this.keyDeserializer = keyValueDeserializer.keyDeSerializer();
+        this.onStop = Optional.ofNullable(lifecycleConsumerElements.onStop()).orElse(LifecycleConsumerElements.ON_CONSUMER_STOP_DEF);
+        this.valueDeserializer = keyValueDeserializer.valueDeSerializer();
+        this.rebalanceListener = initConsumerRebalancer(lifecycleConsumerElements);
+        this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(LifecycleConsumerElements.DEF_ON_FLOW_ERROR_HANDLER);
+        // relevant only in case of enable.auto.commit = false
+        this.onCommit = Optional.ofNullable(lifecycleConsumerElements.onCommit()).orElse(LifecycleConsumerElements.DEF_EXT_WORKER);
+        initPauseResumeListener();
+    }
+
+    private void initProperties(KafkaProperties properties) {
         this.consumerProperties = new Properties();
         if (properties.getProperties() != null)
             this.consumerProperties.putAll(properties.getProperties());
@@ -69,28 +85,19 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         if (enableAutoCommit) {
             log.info("auto commit enabled, means commit is async only and callback onCommit not executed");
         }
+    }
 
-        this.consumerTopic = properties.getTopic();
-        lifecycleConsumerElements = Optional.ofNullable(lifecycleConsumerElements).orElse(DEF_LIFECYCLE_ELEMENTS);
-        this.consumerTimeout = properties.getTimeout() > 0 ? properties.getTimeout() : Integer.MAX_VALUE;
-        this.keyDeserializer = keyValueDeserializer.keyDeSerializer();
-        this.onStop = Optional.ofNullable(lifecycleConsumerElements.onStop()).orElse(LifecycleConsumerElements.ON_CONSUMER_STOP_DEF);
-        this.valueDeserializer = keyValueDeserializer.valueDeSerializer();
-        this.rebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
-        this.flowErrorHandler = Optional.ofNullable(lifecycleConsumerElements.flowErrorHandler()).orElse(LifecycleConsumerElements.DEF_ON_FLOW_ERROR_HANDLER);
-        // relevant only in case of enable.auto.commit = false
-        this.onCommit = Optional.ofNullable(lifecycleConsumerElements.onCommit()).orElse(LifecycleConsumerElements.DEF_EXT_WORKER);
-
+    private void initPauseResumeListener() {
         this.commander = new Commander() {
             @Override
             public void resume(MetaData metaData) {
-                if (metaData instanceof KafkaMetaData)
+                if (metaData instanceof KafkaStandardConsumerDelegator.KafkaMetaData)
                     KafkaStandardConsumerDelegator.this.resume(((KafkaMetaData)metaData).getPartition());
             }
 
             @Override
             public void pause(MetaData metaData, Duration duration) {
-                if (metaData instanceof KafkaMetaData) {
+                if (metaData instanceof KafkaStandardConsumerDelegator.KafkaMetaData) {
                     scheduleResume((KafkaMetaData) metaData, duration);
                     KafkaStandardConsumerDelegator.this.pause(((KafkaMetaData) metaData).getPartition());
                 }
@@ -105,6 +112,29 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
                             KafkaStandardConsumerDelegator.this.resume(metaData.getPartition());
                         }
                     }, duration.toMillis());
+                }
+            }
+        };
+    }
+
+    private ConsumerRebalanceListener initConsumerRebalancer(LifecycleConsumerElements lifecycleConsumerElements) {
+        ConsumerRebalanceListener consumerRebalanceListener = Optional.ofNullable(lifecycleConsumerElements.rebalanceListener()).orElse(LifecycleConsumerElements.DEF_NOOP_REBALANCE_LISTENER);
+        return new ConsumerRebalanceListener() {
+            @Override
+            public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
+                try {
+                    consumerRebalanceListener.onPartitionsRevoked(partitions);
+                } catch (Exception e) {
+                    log.error("Failed to invoke rebalance listener onRevoke", e);
+                }
+            }
+
+            @Override
+            public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
+                try {
+                    consumerRebalanceListener.onPartitionsAssigned(partitions);
+                } catch (Exception e) {
+                    log.error("Failed to invoke rebalance listener onAssign", e);
                 }
             }
         };
@@ -283,19 +313,21 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         AtomicBoolean pausePartition = pausePartitions.get(partition);
         AtomicBoolean resumePartition = resumePartitions.get(partition);
         if (pausePartition != null && resumePartition != null) {
-            // todo: order????
+            // todo: order of actions is important ????
             pausePartition.set(true);
             resumePartition.set(false);
             MetricModule.getMetricStore().increaseCounter("consumer.paused." + partition);
         }
     }
 
-    private boolean isRunning() {
+    public boolean isRunning() {
         return running.get() && kafkaConsumer != null;
     }
 
     public void stopConsume() {
-        running.set(false);
+        if (!running.getAndSet(false))
+            return; // we already stopped
+
         silentClose();
         try {
             externalWorkExecutor.submit(onStop::onStop);
@@ -308,6 +340,11 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             MetricModule.getMetricStore().increaseCounter("consumer.stopped." + this.uid);
         }
         // we still can be stuck inside processRecord method if no onStopConsumer implemented or onStopConsumer takes a lot of time, since it could take a lot of time
+    }
+
+    @Override
+    public void close() throws IOException {
+        stopConsume();
     }
 
     @AllArgsConstructor
@@ -337,5 +374,4 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         private String topic;
         private long offset;
     }
-
 }

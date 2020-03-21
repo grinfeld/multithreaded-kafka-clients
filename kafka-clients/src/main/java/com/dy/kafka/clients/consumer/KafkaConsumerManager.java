@@ -6,13 +6,11 @@ import com.dy.kafka.clients.consumer.model.Worker;
 import com.dy.kafka.clients.serializers.KeyValueDeserializer;
 import com.dy.metrics.utils.Utils;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
-import org.apache.kafka.common.TopicPartition;
 
-import java.util.Collection;
-import java.util.Map;
-import java.util.UUID;
+import java.io.IOException;
+import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -25,6 +23,8 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     private Map<String, KafkaStandardConsumerDelegator<K, T>> consumers;
     private int numOfThreads;
     private LifecycleConsumerElements lifecycleConsumerElements;
+    private AtomicBoolean stop = new AtomicBoolean(false);
+    private AtomicBoolean running = new AtomicBoolean(false);
     private CountDownLatch latch;
 
     public KafkaConsumerManager(int numOfThreads, KafkaProperties properties,
@@ -38,7 +38,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
 
     @Override
     public void startConsume(Worker<K, T> consumer) {
-        if (!consumers.isEmpty()) {
+        if (!consumers.isEmpty() && !stop.get()) {
             throw new RuntimeException("Can't start new consumers, until all of previously started consumers not stopped");
         }
         consume(consumer);
@@ -54,78 +54,75 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
     }
 
     private LifecycleConsumerElements normalizeLifeCycleElements(Worker<K, T> consumer) {
-        ConsumerRebalanceListener rebalanceListener = new MultiThreadedRebalanceListener<>(consumer, this);
         LifecycleConsumerElements lifecycleConsumerElementsLocal = lifecycleConsumerElements;
         if (lifecycleConsumerElementsLocal == null) {
-            lifecycleConsumerElementsLocal = LifecycleConsumerElements.builder().rebalanceListener(rebalanceListener).build();
-        }
-        if (lifecycleConsumerElementsLocal.rebalanceListener() == null) {
-            lifecycleConsumerElementsLocal = lifecycleConsumerElementsLocal.toBuilder().rebalanceListener(rebalanceListener).build();
+            lifecycleConsumerElementsLocal = LifecycleConsumerElements.builder().build();
         }
         return lifecycleConsumerElementsLocal;
     }
 
     private void consume(Worker<K, T> consumer) {
-        ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
-        latch = new CountDownLatch(1);
-        try {
-            this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
-                    .map(uid -> initConsumer(consumer, uid))
-                    .peek(c -> executors.submit(() -> c.startConsume(consumer)))
-                    .collect(Collectors.toMap(KafkaStandardConsumerDelegator::getUid, Function.identity()));
+        if (running.getAndSet(true))
+            return;
+        while(!stop.get()) {
+            // todo: we initialize too much objects - could be replaced with different, more efficient way?
+            ExecutorService executors = Executors.newFixedThreadPool(numOfThreads);
+            latch = new CountDownLatch(1);
             try {
-                latch.await();
-            } catch (InterruptedException ignore) {
-                // ignore
+                this.consumers = IntStream.range(0, numOfThreads).mapToObj(i -> UUID.randomUUID().toString())
+                        .map(uid -> initConsumer(consumer, uid))
+                        .collect(Collectors.toMap(KafkaStandardConsumerDelegator::getUid, Function.identity()));
+                for (KafkaConsumerDelegator<K, T> kafkaConsumer : consumers.values()) {
+                    executors.submit(() -> kafkaConsumer.startConsume(consumer));
+                }
+                try {
+                    latch.await();
+                } catch (Exception ignore) {
+                    // ignore
+                }
+            } catch (Exception e) {
+                log.error("", e);
+                Utils.rethrowRuntime(e);
+            } finally {
+                executors.shutdown();
+                stopConsume();
             }
-        } catch (Exception e) {
-            Utils.rethrowRuntime(e);
+        }
+    }
+
+    public void stopConsume() {
+        try {
+            consumers.forEach((id, consumer) -> stopSingleConsumer(consumer));
         } finally {
-            executors.shutdown();
             resetConsumers();
         }
     }
 
-    @Override
-    public void stopConsume() {
+    private void stopSingleConsumer(KafkaStandardConsumerDelegator<K, T> consumer) {
         try {
-            consumers.forEach((id, consumer) -> consumer.stopConsume());
-        } finally {
-            resetConsumers();
+            consumer.close();
+        } catch (Exception e) {
+            log.warn("Failed to stop consume with " + e.getMessage());
         }
     }
 
     private void resetConsumers() {
-        latch.countDown();
         this.consumers = new ConcurrentHashMap<>();
     }
 
-    static class MultiThreadedRebalanceListener<K, T> implements ConsumerRebalanceListener {
-        private Worker<K, T> consumer;
-        private KafkaConsumerManager<K, T> manager;
-        private final Object lock = new Object();
-
-        public MultiThreadedRebalanceListener(Worker<K, T> consumer, KafkaConsumerManager<K, T> manager) {
-            this.consumer = consumer;
-            this.manager = manager;
+    @Override
+    public void close() throws IOException {
+        if (stop.getAndSet(true))
+            return; // already stopped
+        try {
+            this.latch.countDown();
+        } catch (Exception ignore) {
+            // ignoring
         }
-
-        @Override
-        public void onPartitionsRevoked(Collection<TopicPartition> partitions) {
-            synchronized (lock) {
-                manager.stopConsume();
-            }
-        }
-
-        // todo: should I deal with initial state, a.k.k.a checking if partition assignment is initial or came after revoke ????
-
-        @Override
-        public void onPartitionsAssigned(Collection<TopicPartition> partitions) {
-            synchronized (lock) {
-                // todo: check partitions, which only not already assigned
-                manager.consume(consumer);
-            }
-        }
+        running.set(false);
     }
 
+    Collection<KafkaStandardConsumerDelegator<K,T>> getConsumers() {
+        return consumers.values();
+    }
 }
