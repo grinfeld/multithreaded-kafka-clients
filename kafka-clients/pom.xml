@@ -3,8 +3,8 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
-        <artifactId>ditributed</artifactId>
-        <groupId>com.dy.misha</groupId>
+        <artifactId>multithreaded</artifactId>
+        <groupId>com.mikerusoft.kafka-clients</groupId>
         <version>${revision}</version>
         <relativePath>..</relativePath>
     </parent>
@@ -41,12 +41,12 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>com.dy.misha</groupId>
+            <groupId>com.mikerusoft.kafka-clients</groupId>
             <artifactId>utils</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
         <dependency>
-            <groupId>com.dy.misha</groupId>
+            <groupId>com.mikerusoft.kafka-clients</groupId>
             <artifactId>metrics</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
