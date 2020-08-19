@@ -1,7 +1,7 @@
 package com.mikerusoft.kafka.clients;
 
 import com.mikerusoft.kafka.clients.metrics.MetricStore;
-import com.mikerusoft.kafka.clients.metrics.guice.MetricModule;
+import com.mikerusoft.kafka.clients.metrics.guice.MetricFactory;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.common.metrics.KafkaMetric;
 import org.apache.kafka.common.metrics.MetricsReporter;
@@ -25,7 +25,7 @@ public class KafkaMetricReporter implements MetricsReporter {
     public void init(List<KafkaMetric> metrics) {
         synchronized (lock) {
             if (metricStore == null)
-                metricStore = MetricModule.getMetricStore();
+                metricStore = MetricFactory.getMetricStore();
         }
         if (metrics != null)
             metrics.forEach(this::metricChange);

@@ -19,8 +19,8 @@ public class KafkaModule {
     private static final int DEF_MAX_POLL_RECORDS = 50;
 
     private static final String PREFIX = "offline.kafka.";
-    private String prefix;
-    private Config config;
+    private final String prefix;
+    private final Config config;
 
     public KafkaModule(Config config) {
         this(config, PREFIX);

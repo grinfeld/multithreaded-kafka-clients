@@ -45,7 +45,7 @@ public class MetricModule extends AbstractModule {
                 getOrDefault("monitoring.statsd.host", DEF_STATSD_HOST),
                 getOrDefault("monitoring.statsd.port", DEF_STATSD_PORT)
             );
-            instance = metrics = new TimegroupMetricStore(
+            MetricFactory.instance = metrics = new TimegroupMetricStore(
                 new NonBlockingStatsDClient(
                     "offline-" + machineName + "." + getOrDefault("monitoring.prefix", ""),
                     getOrDefault("monitoring.statsd.host", DEF_STATSD_HOST),
@@ -53,7 +53,7 @@ public class MetricModule extends AbstractModule {
                 )
             );
         } else {
-            instance = metrics = new TimegroupMetricStore(new NoOpStatsDClient());
+            MetricFactory.instance = metrics = new TimegroupMetricStore(new NoOpStatsDClient());
         }
         bindInterceptor(any(), Matchers.annotatedWith(AddMetric.class), new GuiceMetricMethodIntercepter(metrics));
     }
@@ -64,13 +64,5 @@ public class MetricModule extends AbstractModule {
         }
         return def;
     }
-
-    // we need this for use-case when we want to use metrics in class which hasn't been
-    // bound via Guice for example, classes that created with "new"
-    //(note: this module SHOULD exists in application in any case and registered in Guice, since it initialized during Guice configure state)
-    public static MetricStore getMetricStore() {
-        return instance;
-    }
-    private static MetricStore instance = new MetricStore() {};
 
 }

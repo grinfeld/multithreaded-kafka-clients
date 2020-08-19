@@ -35,7 +35,7 @@ public class KafkaConsumerManager<K, T> implements KafkaConsumerDelegator<K, T> 
         this.keyValueDeserializer = keyValueDeserializer;
         this.consumers = new ConcurrentHashMap<>();
         this.lifecycleConsumerElements = lifecycleConsumerElements;
-        this.closeFuture = new FutureTask<Boolean>(() -> true);
+        this.closeFuture = new FutureTask<>(() -> true);
     }
 
     @Override

@@ -1,8 +1,8 @@
 package com.mikerusoft.kafka.clients.consumer;
 
 import com.mikerusoft.kafka.clients.KafkaProperties;
+import com.mikerusoft.kafka.clients.metrics.guice.MetricFactory;
 import com.mikerusoft.kafka.clients.serializers.KeyValueDeserializer;
-import com.mikerusoft.kafka.clients.metrics.guice.MetricModule;
 import com.mikerusoft.kafka.clients.consumer.model.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -149,7 +149,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         initConsumer();
         externalWorkExecutor = Executors.newSingleThreadExecutor();
         //kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener);
-        MetricModule.getMetricStore().increaseCounter("subscribed." + consumerTopic,
+        MetricFactory.getMetricStore().increaseCounter("subscribed." + consumerTopic,
             () -> kafkaConsumer.subscribe(new ArrayList<>(Collections.singletonList(consumerTopic)), rebalanceListener)
         );
         initPauseResumeState();
@@ -189,9 +189,9 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             // todo: put some metadata (partition, offset in threadcontext ???
             T value = record.value();
             K key = record.key();
-            if (value == null) {
+            if (value == null && key == null) {
                 log.warn("Failed to deserialize object from Kafka with key '{}'", key);
-                MetricModule.getMetricStore().increaseCounter("consumer_deserialization.error");
+                MetricFactory.getMetricStore().increaseCounter("consumer_deserialization.error");
             } else {
                 // todo: if I want to propagate metadata -> headers and so on
                 doConsumerAction(consumer, value, key, wrapMetaData(record));
@@ -216,7 +216,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
 
     private void handleRecordException(Exception e) {
         log.error("We won't commit record, so we should get record again", e);
-        MetricModule.getMetricStore().increaseCounter("consumer." + e.getClass().getSimpleName());
+        MetricFactory.getMetricStore().increaseCounter("consumer." + e.getClass().getSimpleName());
     }
 
     private ConsumerRecords<K, T> getRecords(Consumer<K, T> kafkaConsumer) {
@@ -302,7 +302,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         if (pausePartition != null && resumePartition != null) {
             resumePartition.set(true);
             pausePartition.set(false);
-            MetricModule.getMetricStore().increaseCounter("consumer.resumed." + partition);
+            MetricFactory.getMetricStore().increaseCounter("consumer.resumed." + partition);
         }
     }
 
@@ -316,7 +316,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
             // todo: order of actions is important ????
             pausePartition.set(true);
             resumePartition.set(false);
-            MetricModule.getMetricStore().increaseCounter("consumer.paused." + partition);
+            MetricFactory.getMetricStore().increaseCounter("consumer.paused." + partition);
         }
     }
 
@@ -337,7 +337,7 @@ public class KafkaStandardConsumerDelegator<K, T> implements KafkaConsumerDelega
         } catch (Exception e) {
             log.warn("Exception during stopping process record " + e.getMessage());
         } finally {
-            MetricModule.getMetricStore().increaseCounter("consumer.stopped." + this.uid);
+            MetricFactory.getMetricStore().increaseCounter("consumer.stopped." + this.uid);
         }
         // we still can be stuck inside processRecord method if no onStopConsumer implemented or onStopConsumer takes a lot of time, since it could take a lot of time
     }
