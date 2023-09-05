@@ -12,7 +12,7 @@
     <artifactId>kafka-clients</artifactId>
 
     <properties>
-        <kafka.version>2.5.1</kafka.version>
+        <kafka.version>2.6.3</kafka.version>
         <scala.version>2.12</scala.version>
     </properties>
 
